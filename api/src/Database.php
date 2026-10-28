@@ -70,7 +70,10 @@ final class Database
      */
     private static function parse(string $url): array
     {
-        if (preg_match('/^sqlite3?:(.*)$/i', $url, $m) === 1) {
+        // `file:` is the URL form the Posse environment setup writes for a
+        // SQLite database (`file:./api/var/forge.sqlite`, `file:///abs/path`);
+        // it names the same file a `sqlite:` URL does.
+        if (preg_match('/^(?:sqlite3?|file):(.*)$/i', $url, $m) === 1) {
             return [self::sqliteDsn($m[1]), null, null];
         }
 
