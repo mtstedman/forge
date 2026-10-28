@@ -1,0 +1,34 @@
+# Uploaded media is static data only: never execute scripts from this directory.
+
+# No CGI, server-side includes or directory listings.
+Options -ExecCGI -Includes -Indexes
+
+# Turn the PHP engine off for mod_php builds.
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php5.c>
+    php_flag engine off
+</IfModule>
+
+# Drop every script handler/type mapping and serve files as plain static content.
+RemoveHandler .php .php3 .php4 .php5 .php7 .php8 .phtml .pht .phar .phps .cgi .pl .py .sh .shtml
+RemoveType .php .php3 .php4 .php5 .php7 .php8 .phtml .pht .phar .phps .cgi .pl .py .sh .shtml
+SetHandler none
+<FilesMatch ".*">
+    SetHandler none
+</FilesMatch>
+
+# Refuse script-like and hidden files outright (covers php-fpm proxy handlers too).
+<FilesMatch "(?i)(\.(php[0-9]?|phtml|pht|phar|phps|cgi|pl|py|sh|shtml)$|^\.)">
+    Require all denied
+</FilesMatch>
+
+# Stop browsers from sniffing uploads into active content.
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set Content-Security-Policy "default-src 'none'; img-src 'self'; sandbox"
+</IfModule>

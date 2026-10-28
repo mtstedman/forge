@@ -1,0 +1,13 @@
+# Front controller for the Forge JSON API.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Pass the Authorization header through to PHP (CGI/FPM drop it otherwise).
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Serve existing files (e.g. uploads) directly; route everything else,
+    # including directory requests, through index.php.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>

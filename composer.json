@@ -9,5 +9,11 @@
   },
   "require-dev": {
     "phpunit/phpunit": "^10.5"
+  },
+  "autoload": {
+    "psr-4": {
+      "Forge\\Api\\": "api/src/",
+      "Forge\\Site\\": "src/includes/"
+    }
   }
 }

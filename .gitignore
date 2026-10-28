@@ -4,3 +4,6 @@
 /api/var/forge.sqlite-shm
 /api/var/forge.sqlite-journal
 /.env
+/api/public/uploads/*
+!/api/public/uploads/.htaccess
+/api/var/*

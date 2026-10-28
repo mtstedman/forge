@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         cacheDirectory="api/var/.phpunit.cache"
+         colors="true">
+    <testsuites>
+        <testsuite name="api">
+            <directory>api/tests</directory>
+        </testsuite>
+        <testsuite name="site">
+            <directory>tests/site</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>

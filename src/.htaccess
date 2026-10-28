@@ -1,0 +1,8 @@
+Options -Indexes
+DirectoryIndex index.php
+
+RewriteEngine On
+RewriteRule ^includes(?:/|$) - [F,L,NC]
+RewriteRule ^resources/([^/]+)/?$ resources/post.php?slug=$1 [B,END,QSA]
+RewriteRule ^sitemap\.xml$ sitemap.php [END]
+RewriteRule ^robots\.txt$ robots.php [END]
