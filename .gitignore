@@ -1,0 +1,6 @@
+/vendor/
+/api/var/forge.sqlite
+/api/var/forge.sqlite-wal
+/api/var/forge.sqlite-shm
+/api/var/forge.sqlite-journal
+/.env
