@@ -13,7 +13,6 @@ $root = dirname(__DIR__, 2);
 /** @var \Composer\Autoload\ClassLoader $loader */
 $loader = require $root . '/vendor/autoload.php';
 $loader->addPsr4('Forge\\Api\\', $root . '/api/src/');
-$loader->addPsr4('Forge\\Site\\', $root . '/src/includes/');
 
 Dotenv::createImmutable($root)->safeLoad();
 

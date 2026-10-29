@@ -1,0 +1,213 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Lora:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.975 0.018 88);
+  --foreground: oklch(0.245 0.025 65);
+  --card: oklch(0.992 0.009 88);
+  --card-foreground: oklch(0.245 0.025 65);
+  --popover: oklch(0.992 0.009 88);
+  --popover-foreground: oklch(0.245 0.025 65);
+  --primary: oklch(0.37 0.068 66);
+  --primary-foreground: oklch(0.985 0.012 88);
+  --secondary: oklch(0.925 0.036 84);
+  --secondary-foreground: oklch(0.29 0.035 66);
+  --muted: oklch(0.935 0.022 84);
+  --muted-foreground: oklch(0.47 0.028 66);
+  --accent: oklch(0.82 0.11 82);
+  --accent-foreground: oklch(0.245 0.035 65);
+  --destructive: oklch(0.55 0.205 28);
+  --border: oklch(0.82 0.052 80);
+  --input: oklch(0.79 0.048 80);
+  --ring: oklch(0.56 0.105 75);
+  --chart-1: oklch(0.56 0.105 75);
+  --chart-2: oklch(0.48 0.08 155);
+  --chart-3: oklch(0.43 0.08 245);
+  --chart-4: oklch(0.7 0.13 48);
+  --chart-5: oklch(0.62 0.11 15);
+  --sidebar: oklch(0.95 0.025 86);
+  --sidebar-foreground: oklch(0.245 0.025 65);
+  --sidebar-primary: oklch(0.37 0.068 66);
+  --sidebar-primary-foreground: oklch(0.985 0.012 88);
+  --sidebar-accent: oklch(0.88 0.065 83);
+  --sidebar-accent-foreground: oklch(0.245 0.035 65);
+  --sidebar-border: oklch(0.82 0.052 80);
+  --sidebar-ring: oklch(0.56 0.105 75);
+  --forge-cream: oklch(0.975 0.018 88);
+  --forge-gold: oklch(0.72 0.13 78);
+  --forge-ink: oklch(0.245 0.025 65);
+  --font-body: "Lora", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-display: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+.dark {
+  --background: oklch(0.2 0.02 66);
+  --foreground: oklch(0.94 0.02 86);
+  --card: oklch(0.245 0.024 66);
+  --card-foreground: oklch(0.94 0.02 86);
+  --popover: oklch(0.245 0.024 66);
+  --popover-foreground: oklch(0.94 0.02 86);
+  --primary: oklch(0.78 0.115 80);
+  --primary-foreground: oklch(0.22 0.026 65);
+  --secondary: oklch(0.31 0.025 66);
+  --secondary-foreground: oklch(0.94 0.02 86);
+  --muted: oklch(0.29 0.02 66);
+  --muted-foreground: oklch(0.75 0.025 82);
+  --accent: oklch(0.38 0.055 73);
+  --accent-foreground: oklch(0.96 0.02 86);
+  --destructive: oklch(0.7 0.17 27);
+  --border: oklch(0.39 0.035 70);
+  --input: oklch(0.42 0.035 70);
+  --ring: oklch(0.75 0.105 80);
+  --chart-1: oklch(0.75 0.105 80);
+  --chart-2: oklch(0.67 0.1 155);
+  --chart-3: oklch(0.65 0.09 245);
+  --chart-4: oklch(0.75 0.12 48);
+  --chart-5: oklch(0.72 0.12 15);
+  --sidebar: oklch(0.225 0.022 66);
+  --sidebar-foreground: oklch(0.94 0.02 86);
+  --sidebar-primary: oklch(0.78 0.115 80);
+  --sidebar-primary-foreground: oklch(0.22 0.026 65);
+  --sidebar-accent: oklch(0.33 0.04 72);
+  --sidebar-accent-foreground: oklch(0.96 0.02 86);
+  --sidebar-border: oklch(0.39 0.035 70);
+  --sidebar-ring: oklch(0.75 0.105 80);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-forge-cream: var(--forge-cream);
+  --color-forge-gold: var(--forge-gold);
+  --color-forge-ink: var(--forge-ink);
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-display);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    min-width: 320px;
+    scroll-behavior: smooth;
+    background: var(--background);
+  }
+
+  body {
+    min-height: 100vh;
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-body);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+
+  :focus-visible {
+    outline: 3px solid color-mix(in oklab, var(--ring) 70%, transparent);
+    outline-offset: 3px;
+  }
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  transform: translateY(-150%);
+  border-radius: var(--radius-sm);
+  background: var(--foreground);
+  color: var(--background);
+  padding: 0.625rem 1rem;
+  font-weight: 700;
+  transition: transform 150ms ease;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

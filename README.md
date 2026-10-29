@@ -1,304 +1,280 @@
-# Ancora Timing
+# Forge Performance Therapy
 
 Source repository: <https://github.com/mtstedman/forge>
 
-## Hosting
+This repository contains two runtime applications:
 
-| Purpose | Host | Server directory |
+- `frontend/` is the public website and admin UI, implemented with the Next.js
+  Pages Router, TypeScript, Tailwind CSS v4 and the shared UI components.
+- `api/` is the retained PHP JSON API, database layer and upload host.
+
+The former PHP-rendered website has been retired. There is one active frontend:
+the Next.js application in `frontend/`.
+
+## Hosting and deployment status
+
+| Purpose | Host | Production role |
 | --- | --- | --- |
-| Website | `ancoratiming.com` | `/var/www/ancoratiming.com/htdocs/` |
-| API | `api.ancoratiming.com` | `/var/www/ancoratiming.com/api/` |
+| Website | `ancoratiming.com` | Reverse proxy to a long-running Node/Next.js service |
+| API | `api.ancoratiming.com` | PHP web root at `api/public/` |
 | GitHub webhook | `deploy.ancoratiming.com/github` | Shared deployment listener |
 
-HTTPS and the push webhook are provisioned. Signed pushes to `main` are
-acknowledged with `202 webhook received; deployment not configured`.
-There is no deployment script yet, and pushes do not publish application files.
-The empty website and API roots do not contain an application yet.
+HTTPS and the signed push webhook are provisioned, but application deployment is
+not activated by this repository. Pushes do not publish files or restart a Next
+service.
 
-Host deployment configuration and its activation instructions live in
-`/home/mason/repos/deployment/forge/README.md`. Webhook secrets remain in that
-repository's ignored runtime directory, outside all public document roots.
+Production needs both a Node service running the built `frontend/` application
+and a website reverse proxy forwarding to it. The API continues to be served
+from `api/public/`; it is not moved behind the Next service. Host configuration,
+process supervision, reverse-proxy rules and activation instructions belong in
+the external deployment repository at `/home/mason/repos/deployment/forge/`.
+Nothing in this README claims that production activation has occurred.
 
 ## Repository layout
 
 | Path | Contents |
 | --- | --- |
-| `src/` | Public website (landing page, `/resources/` blog, admin UI in `src/admin/`). The website is built from this directory. |
-| `src/includes/` | Site PHP classes (`Forge\Site\…`). Denied over HTTP by `src/.htaccess`. |
-| `api/public/` | Front controller (`index.php`) for the PHP JSON API, plus the uploads directory. Web root for the API. |
-| `api/src/` | API PHP classes (`Forge\Api\…`). |
-| `api/bin/migrate.php` | Applies `api/database/schema.sql` to the configured database. |
-| `api/bin/create-admin.php` | Creates an administrator account, or updates its password. See [Admin sign-in](#admin-sign-in). |
-| `api/database/` | `schema.sql` (tables) and `seed.sql` (optional sample posts). |
-| `api/var/` | Runtime data: default SQLite database, JWKS cache, PHPUnit cache. |
-| `api/tests/`, `tests/site/` | PHPUnit suites `api` and `site`. |
+| `frontend/` | Next.js website, public resources, discovery routes and `/admin/` UI |
+| `frontend/src/pages/` | Pages Router entry points with server-side status/header handling |
+| `frontend/src/components/` | React components and Tailwind/shadcn-style UI primitives |
+| `api/public/` | PHP API front controller and persistent public upload storage |
+| `api/src/` | PHP API classes under the `Forge\Api\` namespace |
+| `api/bin/migrate.php` | Applies `api/database/schema.sql` |
+| `api/bin/create-admin.php` | Creates an administrator or resets its password |
+| `api/database/` | SQLite schema and optional seed data |
+| `api/var/` | Runtime database, JWKS cache and PHPUnit cache |
+| `api/tests/` | PHPUnit API suite |
 
-The entry points and `tests/bootstrap.php` register the namespaces
-`Forge\Api\` (`api/src/`) and `Forge\Site\` (`src/includes/`) at runtime.
-They call `$loader->addPsr4()` on the Composer class loader, so `vendor/`
-does not need to be regenerated after you add classes.
+Composer and `tests/bootstrap.php` register only `Forge\Api\` from `api/src/`.
+The removed PHP renderer and its `Forge\Site\` namespace are not part of the
+runtime or test configuration.
 
 ## Requirements
 
-- PHP 8.1 or newer with the `pdo_sqlite`, `mbstring` and `fileinfo` extensions
-- [Composer](https://getcomposer.org/)
-- Apache with `mod_rewrite` in production. Both document roots include an
-  `.htaccess` file.
-- The `sqlite3` CLI, only if you want to load the optional seed data
+- Node.js 20.9 or newer and npm
+- PHP 8.1 or newer with `pdo_sqlite`, `mbstring` and `fileinfo`
+- Composer
+- `sqlite3` only when loading the optional sample data from the command line
+- A PHP-capable web server for `api/public/` in production
+- A Node process manager and reverse proxy for the Next.js website in production
 
-## Setup
+## Initial setup
 
-1. Install dependencies from the repository root:
+### API
 
-   ```sh
-   composer install
-   ```
+Install the retained PHP dependencies from the repository root:
 
-2. Create the repository-root `.env`. Every entry point (API, migration script
-   and website) loads this one file with phpdotenv. Variables that are already
-   set in the real process environment are not overwritten.
+```sh
+composer install
+```
 
-   ```sh
-   cp .env.example .env
-   cat database.env.example >> .env
-   ```
+Create the repository-root `.env` for PHP processes:
 
-   `.env.example` contains the API and site settings, and `database.env.example`
-   contains the database connection. Never commit `.env`. Generate a private
-   `APP_KEY`:
+```sh
+cp .env.example .env
+cat database.env.example >> .env
+```
 
-   ```sh
-   php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'
-   ```
+The API front controller and PHP commands load this root `.env` with phpdotenv.
+Existing process-environment values are not overwritten. Keep secrets such as
+`APP_KEY`, database credentials and OAuth verification settings out of Git.
+Generate an `APP_KEY`, apply the schema and create the first administrator:
 
-3. Create or update the database schema. You can re-run this safely because
-   the schema uses `CREATE TABLE IF NOT EXISTS`:
+```sh
+php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'
+php api/bin/migrate.php
+php api/bin/create-admin.php admin@example.com 'change-me' 'Site Admin'
+```
 
-   ```sh
-   php api/bin/migrate.php
-   ```
+The administrator command also accepts the password through `ADMIN_PASSWORD`.
+Re-running it for an existing email resets that account's password.
 
-   With the default settings, this creates `api/var/forge.sqlite`.
+Optional sample data can be loaded after migration:
 
-4. Create the first administrator. Use your own email address and a strong
-   password. The values below are placeholders:
+```sh
+sqlite3 api/var/forge.sqlite < api/database/seed.sql
+```
 
-   ```sh
-   php api/bin/create-admin.php admin@example.com 'change-me' 'Site Admin'
-   ```
+The bundled schema is SQLite-oriented. With the default configuration the
+runtime database is `api/var/forge.sqlite`. The connection code also accepts
+`DATABASE_URL` or the `DB_CONNECTION`/`DB_DATABASE` fallback settings.
 
-   You can also omit the password argument and supply it through the
-   `ADMIN_PASSWORD` environment variable. Re-running the command for an
-   existing email updates that administrator's password. See
-   [Admin sign-in](#admin-sign-in).
+### Frontend
 
-5. Optional: load the sample posts. The seed uses `INSERT OR IGNORE`, so you can
-   apply it more than once:
+The approved frontend manifests are `frontend/package.json` and
+`frontend/package-lock.json`. Install exactly the locked dependency graph:
 
-   ```sh
-   sqlite3 api/var/forge.sqlite < api/database/seed.sql
-   ```
+```sh
+cd frontend
+npm ci
+```
 
-### Database
+Next.js loads frontend settings from the process environment and from files in
+`frontend/`, such as `frontend/.env.local`. It does not load the repository-root
+PHP `.env` merely because the API loads it. For local development create
+`frontend/.env.local` with values like:
 
-Set `DATABASE_URL` if you can. Examples:
+```dotenv
+SITE_URL=http://localhost:3000
+API_BASE_URL=http://localhost:8080
+PUBLIC_API_URL=http://localhost:8080
+OAUTH_AUTHORIZE_URL=
+OAUTH_TOKEN_URL=
+OAUTH_CLIENT_ID=
+OAUTH_AUDIENCE=
+OAUTH_SCOPE=openid profile email
+OAUTH_REDIRECT_URI=http://localhost:3000/admin/
+```
 
-- `sqlite:api/var/forge.sqlite` (relative to the repository root)
-- `sqlite:///absolute/path/forge.sqlite`
+`API_BASE_URL` is used by server-side Next requests. `PUBLIC_API_URL` is passed
+to browser code for comments, authentication and admin requests. OAuth settings
+are optional; the single-sign-on option appears only when the required provider
+URLs, client ID and redirect URI are all configured. These values are delivered
+through server-rendered props rather than a `NEXT_PUBLIC_*` bundle-time mapping.
 
-If `DATABASE_URL` is empty, the API uses `DB_CONNECTION` and `DB_DATABASE`
-instead. The connection layer can also parse `mysql://` and `postgres://` URLs,
-but the bundled schema is written for SQLite.
+Available frontend scripts are:
+
+```sh
+npm run dev     # Next development server
+npm run build   # production build
+npm run start   # serve a completed production build
+```
 
 ## Running locally
 
-Run the API and the website in two terminals with PHP's built-in server:
+Run the API from the repository root and Next.js from `frontend/` in separate
+terminals:
 
 ```sh
-php -S localhost:8080 -t api/public    # API  -> http://localhost:8080/health
-php -S localhost:8000 -t src           # site -> http://localhost:8000/
+php -S localhost:8080 -t api/public
 ```
 
-Use these `.env` values for this setup:
+```sh
+cd frontend
+npm run dev
+```
+
+The API health endpoint is `http://localhost:8080/health`; Next.js serves the
+website at `http://localhost:3000/` by default.
+
+Because the browser calls the API on another origin, the root PHP `.env` must
+allow the exact frontend origin:
 
 ```dotenv
 APP_ENV=dev
-SITE_URL=http://localhost:8000
-API_BASE_URL=http://localhost:8080
-PUBLIC_API_URL=http://localhost:8080
-CORS_ALLOWED_ORIGINS=http://localhost:8000
-OAUTH_REDIRECT_URI=http://localhost:8000/admin/
+CORS_ALLOWED_ORIGINS=http://localhost:3000
 ```
 
-`OAUTH_REDIRECT_URI` is only used if you configure the optional
-[OAuth provider](#oauth-provider-optional) for single sign-on.
+If OAuth is enabled, register `http://localhost:3000/admin/` as the provider's
+allowed callback and use that exact value for the frontend
+`OAUTH_REDIRECT_URI`. The frontend's requested `OAUTH_AUDIENCE` must match the
+API's verifier setting. `APP_ENV=dev` exposes API error details; use a
+non-development value in production.
 
-The built-in server ignores `.htaccess`, which has two effects when you run
-locally:
+## Runtime configuration
 
-- Apache rewrites are not applied. Open posts as
-  `/resources/post.php?slug=<slug>` instead of `/resources/<slug>`. Use
-  `/sitemap.php` and `/robots.php` instead of `/sitemap.xml` and `/robots.txt`.
-- `src/includes/` is not protected from HTTP access. Use the built-in server
-  only for development.
-
-With `APP_ENV=dev`, API error responses include details. Use
-`APP_ENV=production` on the server.
-
-## Configuration reference
-
-All settings live in the repository-root `.env`. Keep real values, such as
-production OAuth settings and `APP_KEY`, out of the repository.
-
-### API (`api/src`)
+### PHP API (`api/` root `.env`)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_ENV` | unset | `dev` includes error details in responses. Any other value, such as `production`, hides them. |
-| `APP_KEY` | empty | Secret HMAC key used to hash commenter IP addresses. Public comments stay closed while this is empty. |
-| `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins that may call the API, e.g. `https://ancoratiming.com`. |
-| `PUBLIC_COMMENTS_ENABLED` | `false` | Global switch for public comment submission. See [Comments](#comments). |
-| `COMMENT_RATE_LIMIT` | `3` | Number of comments accepted per IP address in each 600-second window. |
-| `OAUTH_ISSUER` | – | Optional, SSO only. Expected `iss` claim of provider access tokens. |
-| `OAUTH_AUDIENCE` | – | Optional, SSO only. Expected `aud` claim (the API identifier). |
-| `OAUTH_JWKS_URL` | – | Optional, SSO only. Provider JWKS endpoint used to verify token signatures. |
-| `OAUTH_REQUIRED_SCOPE` | empty | Optional, SSO only. If set, provider tokens must include this scope in `scope` or `scp`. |
-| `UPLOAD_DIR` | `api/public/uploads` | Storage directory for uploaded images. Relative paths resolve against the repository root. |
-| `UPLOAD_MAX_BYTES` | `5242880` | Maximum upload size in bytes (5 MiB). |
-| `MEDIA_BASE_URL` | `/uploads` for post covers | Public URL prefix for uploaded files. See [Uploads](#uploads). |
-| `DATABASE_URL`, `DB_CONNECTION`, `DB_DATABASE` | – | Database connection. See `database.env.example`. |
-| `ADMIN_PASSWORD` | – | Used only by `api/bin/create-admin.php` when you omit the password argument. Set it for that one command rather than keeping it in `.env`. |
+| `APP_ENV` | unset | `dev` includes error details; production values hide them |
+| `APP_KEY` | empty | HMAC key for commenter IP hashes; comments remain closed without it |
+| `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed to call the API |
+| `PUBLIC_COMMENTS_ENABLED` | `false` | Global public-comment switch |
+| `COMMENT_RATE_LIMIT` | `3` | Accepted comments per IP in a 600-second window |
+| `OAUTH_ISSUER` | unset | Expected provider `iss` claim for optional SSO |
+| `OAUTH_AUDIENCE` | unset | Expected provider `aud` claim |
+| `OAUTH_JWKS_URL` | unset | Provider signing-key endpoint |
+| `OAUTH_REQUIRED_SCOPE` | empty | Optional scope required on provider tokens |
+| `UPLOAD_DIR` | `api/public/uploads` | Filesystem location for uploaded images |
+| `UPLOAD_MAX_BYTES` | `5242880` | Maximum upload size |
+| `MEDIA_BASE_URL` | `/uploads` | Public upload URL prefix |
+| `DATABASE_URL`, `DB_CONNECTION`, `DB_DATABASE` | unset | Database connection settings |
+| `ADMIN_PASSWORD` | unset | One-command password input for `create-admin.php` |
 
-### Website (`src/includes`)
+### Next.js frontend (`frontend/.env.local` or process environment)
 
-The `OAUTH_*` settings below are optional. Set them only if you want the admin
-UI to offer single sign-on through an external provider.
+| Variable | Purpose |
+| --- | --- |
+| `SITE_URL` | Canonical website origin; defaults to `http://localhost` |
+| `API_BASE_URL` | API origin used by SSR requests |
+| `PUBLIC_API_URL` | API origin handed to browser code |
+| `OAUTH_AUTHORIZE_URL` | Optional provider authorization endpoint |
+| `OAUTH_TOKEN_URL` | Optional provider token endpoint |
+| `OAUTH_CLIENT_ID` | Public PKCE client ID |
+| `OAUTH_AUDIENCE` | Audience requested by the frontend; match the API value |
+| `OAUTH_SCOPE` | Requested scopes |
+| `OAUTH_REDIRECT_URI` | Exact registered callback, ending in `/admin/` |
 
-| Variable | Example | Purpose |
-| --- | --- | --- |
-| `SITE_URL` | `https://ancoratiming.com` | Site origin used for canonical URLs, the sitemap and robots.txt. Defaults to `http://localhost`. |
-| `API_BASE_URL` | `https://api.ancoratiming.com` | API base URL for the PHP pages (server side). |
-| `PUBLIC_API_URL` | `https://api.ancoratiming.com` | API base URL for browser scripts (comments and admin). |
-| `OAUTH_AUTHORIZE_URL` | `https://auth.example.com/authorize` | Provider authorization endpoint. |
-| `OAUTH_TOKEN_URL` | `https://auth.example.com/oauth/token` | Provider token endpoint. |
-| `OAUTH_CLIENT_ID` | `your-public-client-id` | Client ID of the public (PKCE) admin client. |
-| `OAUTH_AUDIENCE` | `https://api.ancoratiming.com` | Audience requested for access tokens. Must match the API's `OAUTH_AUDIENCE`. |
-| `OAUTH_SCOPE` | `openid profile email` | Scopes requested at sign-in. If `OAUTH_REQUIRED_SCOPE` is set, include it here. |
-| `OAUTH_REDIRECT_URI` | `https://ancoratiming.com/admin/` | URL the provider returns to after sign-in. |
+## Routes and compatibility
 
-## Admin sign-in
+The completed Next.js application owns `/`, `/resources/`,
+`/resources/{slug}`, `/admin/`, `/robots.txt`, `/sitemap.xml` and the custom 404
+page. Resource pages and discovery endpoints preserve explicit server-side HTTP
+statuses and response headers, including 404 responses and temporary 503
+responses with `Retry-After` where appropriate.
 
-The admin UI (`/admin/`) signs in with an email address and password. It sends
-them to `POST /admin/login` on the API, which returns a bearer access token for
-a local session. The UI then calls the API's `/admin/*` routes with an
-`Authorization: Bearer <access token>` header. Sessions last 12 hours, and **Sign out** ends the session through
-`POST /admin/logout`.
+Permanent redirects preserve links to the retired PHP entry points:
 
-Administrators are stored in the `admin_users` table, which
-`php api/bin/migrate.php` creates. Email addresses are stored trimmed and in
-lower case, and only a `password_hash()` hash of each password is kept. Create
-the first administrator, or reset an existing administrator's password, with:
+- `/index.php` → `/`
+- `/resources/index.php` → `/resources/` (including pagination query strings)
+- `/resources/post.php?slug={slug}` → `/resources/{slug}`
+- `/admin/index.php` → `/admin/`
+- `/robots.php` → `/robots.txt`
+- `/sitemap.php` → `/sitemap.xml`
+
+Canonical redirects also normalize `/resources`, `/admin` and trailing slashes
+on resource detail routes. There is no second PHP frontend serving these paths.
+
+## Admin authentication
+
+`/admin/` signs in with email and password through `POST /admin/login` and sends
+the returned bearer token to the API's `/admin/*` routes. Sign-out calls
+`POST /admin/logout`. Administrators are stored in `admin_users`; create or
+reset one with:
 
 ```sh
 php api/bin/create-admin.php <email> [password] [name]
 ```
 
-- If you omit `[password]`, the script reads it from the `ADMIN_PASSWORD`
-  environment variable instead, for example
-  `ADMIN_PASSWORD='change-me' php api/bin/create-admin.php admin@example.com`.
-- If an administrator with that email already exists, re-running the script
-  updates their password. The `[name]` argument is used only when a new
-  administrator is created.
-- The script loads `.env`, applies the schema first (like
-  `php api/bin/migrate.php`), and prints a one-line confirmation. It never
-  prints the password or its hash. It exits with status 1 and a usage message
-  if the email is invalid or the password is empty.
-
-Never commit real administrator credentials. The examples in this README use
-placeholder values.
-
-## OAuth provider (optional)
-
-OAuth 2.0 / OpenID Connect configuration is optional. You only need it if
-administrators should also sign in through an external provider (single
-sign-on). The API then accepts the provider's JWT access tokens on `/admin/*`
-in addition to local session tokens. The admin UI shows the single sign-on
-button only when `OAUTH_AUTHORIZE_URL`, `OAUTH_CLIENT_ID` and
-`OAUTH_REDIRECT_URI` are set. Configure the provider as follows:
-
-- **Issuer**: set the provider's issuer identifier as `OAUTH_ISSUER`. The
-  token's `iss` claim must match it exactly.
-- **Audience**: register an API (resource) identifier, such as
-  `https://api.ancoratiming.com`, that issues JWT access tokens. Use the same
-  value for both `OAUTH_AUDIENCE` entries. The API accepts an `aud` claim that
-  is either this string or an array containing it.
-- **JWKS**: set the provider's public key set URL as `OAUTH_JWKS_URL`. Tokens
-  must be signed with `RS256` or `ES256`, and other algorithms are rejected.
-  The API caches the keys for five minutes in `api/var/`.
-- **Client**: create a *public* single-page application client that uses the
-  Authorization Code flow with PKCE (`S256`) and has no client secret. Put its
-  ID in `OAUTH_CLIENT_ID`, and set `OAUTH_AUTHORIZE_URL` and `OAUTH_TOKEN_URL`
-  to the provider's endpoints.
-- **Redirect URI**: register the exact `OAUTH_REDIRECT_URI` as an allowed
-  callback. Use `https://ancoratiming.com/admin/` in production and
-  `http://localhost:8000/admin/` locally. If the provider requires it, allow
-  the site origin for CORS on the token endpoint.
-- **Scope** (optional): to limit admin access to specific users, set
-  `OAUTH_REQUIRED_SCOPE` and grant that scope only to administrators.
-
-If the site and the API run on different origins, add the site origin to
-`CORS_ALLOWED_ORIGINS`. Otherwise the admin UI and the comment form cannot
-call the API. Without the API's `OAUTH_ISSUER`, `OAUTH_AUDIENCE` and
-`OAUTH_JWKS_URL`, `/admin/*` accepts only local session tokens from
-`POST /admin/login`.
+Optional OAuth/OIDC sign-in uses Authorization Code with PKCE (`S256`) and a
+public client. Configure the API's issuer, audience and JWKS verification values
+in the root `.env`, and configure the provider/client values separately for the
+Next service. Provider tokens may use `RS256` or `ES256`. If the site and API
+have different origins, the site origin must be present in
+`CORS_ALLOWED_ORIGINS`.
 
 ## Comments
 
-Comments are off by default. A post accepts public comments only when **all**
-of these conditions are met:
+Public comments are accepted only when `PUBLIC_COMMENTS_ENABLED=true`,
+`APP_KEY` is set and the individual post has comments enabled. New comments are
+always pending until an administrator approves them. The public API does not
+return commenter email addresses or IP hashes.
 
-1. `PUBLIC_COMMENTS_ENABLED=true` is set in `.env`. This is the global switch,
-   and its default is `false`.
-2. `APP_KEY` is set.
-3. The post has `comments_enabled` turned on. This is off by default. Turn it
-   on for each post in the admin UI, or send `PUT /admin/posts/{id}` with
-   `{"comments_enabled": true}`.
+## Persistent uploads
 
-The public post response reports the effective state as `comments_enabled`.
+Admin media uploads remain API-owned runtime data. Files are stored under
+`UPLOAD_DIR` (default `api/public/uploads/`) and served by the API host through
+`MEDIA_BASE_URL`. The API accepts JPEG, PNG, WebP and GIF content and rejects
+SVG uploads.
 
-Moderation is required. Every submitted comment is stored as `pending` and
-stays hidden until an administrator approves it. Approve it in the admin UI, or
-send `PATCH /admin/comments/{id}` with `{"status": "approved"}` (or
-`"rejected"`). `GET /admin/comments?status=pending` lists the moderation queue.
-The public API never returns commenter email addresses or IP hashes. Each IP
-address can submit up to `COMMENT_RATE_LIMIT` comments per 10 minutes.
+Do not place uploads in the Next build output and do not replace the upload
+directory during frontend deployment. The API web-server user needs write
+access, `api/public/uploads/.htaccess` must remain in place, and the upload tree
+must be persisted and backed up together with the database.
 
-## Uploads
+## Verification boundary
 
-Images uploaded through the admin media library (`POST /admin/media`) are
-stored in `UPLOAD_DIR` (default `api/public/uploads/`) under random names.
-The API accepts only JPEG, PNG, WebP and GIF files up to `UPLOAD_MAX_BYTES`
-and rejects SVG. It detects the file type from the file contents.
-
-- The directory is created on the first upload. The web server user needs
-  write access to it.
-- `api/public/uploads/.htaccess` disables script execution and serves the
-  files as static content only. Keep this file in place if you move the
-  directory.
-- Public post cover URLs have the form `MEDIA_BASE_URL/<file>`, which is
-  `/uploads/<file>` by default. The admin media listing builds
-  `MEDIA_BASE_URL/uploads/<file>`.
-- Uploaded files are runtime data and are not deployed from the repository.
-  Back them up together with the database.
-
-## Tests
+PHPUnit now contains only the retained API suite:
 
 ```sh
-vendor/bin/phpunit                    # all suites
-vendor/bin/phpunit --testsuite api    # api/tests
-vendor/bin/phpunit --testsuite site   # tests/site
+vendor/bin/phpunit
+vendor/bin/phpunit --testsuite api
 ```
 
-`phpunit.xml` uses `tests/bootstrap.php`, which loads the Composer autoloader
-and registers both project namespaces. The tests build their own configuration
-and do not need an OAuth provider.
+The retired PHP renderer tests have been removed. `frontend/package.json`
+currently has no Next.js test script, so there is no automated frontend runtime
+test command to document. The available `npm run build` command checks whether
+the Next application can produce a production build when dependencies and
+configuration are present, but the legacy renderer tests and API PHPUnit results
+must not be presented as verification of the Next.js runtime or browser UI.

@@ -12,8 +12,7 @@
   },
   "autoload": {
     "psr-4": {
-      "Forge\\Api\\": "api/src/",
-      "Forge\\Site\\": "src/includes/"
+      "Forge\\Api\\": "api/src/"
     }
   }
 }
