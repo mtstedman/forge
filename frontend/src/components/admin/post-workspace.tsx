@@ -5,6 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { useAdminAuth } from "@/components/admin/auth-provider"
 import {
+  markdownSafeUrl,
+  type PostBodyEditorHandle,
+  type PostBodyImage,
+} from "@/components/admin/post-body-editor"
+import {
   FORM_FIELD_TO_API,
   PostEditor,
   commitPostFormDrafts,
@@ -66,26 +71,18 @@ function normalizeMediaItem(raw: unknown): MediaItem | null {
   }
 }
 
-/** Percent-encodes characters that could terminate or alter a Markdown link destination. */
-function markdownSafeUrl(raw: string): string | null {
-  const value = raw.trim()
-  if (value === "") return null
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value)
-  if (scheme && !/^https?$/i.test(scheme[1] ?? "")) return null
-  return value.replace(/[\s()<>"'`\\[\]]/g, (character) =>
-    `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`
-  )
-}
-
-/** Builds image Markdown with an escaped alt text and a safe destination, or null when unsafe. */
-function markdownForMedia(media: MediaItem): string | null {
-  const url = markdownSafeUrl(media.url)
-  if (url === null) return null
-  const alt = (media.alt_text ?? "")
+/**
+ * Builds the editor image for a media item: a safe http(s)/relative source (serialized as
+ * `![alt](url)`) and normalized alt text, or null when the URL cannot be inserted safely.
+ */
+function imageForMedia(media: MediaItem): PostBodyImage | null {
+  const src = markdownSafeUrl(media.url)
+  if (src === null) return null
+  const altText = (media.alt_text ?? "")
     .replace(/[\[\]\\]/g, "")
     .replace(/\s+/g, " ")
     .trim()
-  return `![${alt}](${url})`
+  return { src, altText }
 }
 
 function formatDate(value: string | null): string {
@@ -128,9 +125,9 @@ export function PostWorkspace({
   const [busy, setBusy] = useState<EditorBusy>(null)
 
   const editorRef = useRef<HTMLDivElement>(null)
-  const bodyRef = useRef<HTMLTextAreaElement>(null)
-  const bodyTouchedRef = useRef(false)
-  const pendingCaretRef = useRef<number | null>(null)
+  const bodyEditorRef = useRef<PostBodyEditorHandle>(null)
+  /** Bumped whenever the body editor must load new content with fresh selection and history. */
+  const [bodyKey, setBodyKey] = useState(0)
   const handledInsertRef = useRef<MediaItem | null>(null)
 
   /* ---------- Loading ---------- */
@@ -213,11 +210,16 @@ export function PostWorkspace({
 
   /* ---------- Form state ---------- */
 
-  const applyPost = useCallback((post: AdminPost) => {
+  /**
+   * Loads a server post into the form. Opening a post always reloads the body editor; after a
+   * save the editor (and its selection/undo history) is kept unless the stored body differs.
+   */
+  const applyPost = useCallback((post: AdminPost, replaceBody = false) => {
+    const currentBody = bodyEditorRef.current?.getMarkdown()
     setForm(postFormFromPost(post))
+    if (replaceBody || currentBody !== post.body_markdown) setBodyKey((key) => key + 1)
     setFieldErrors({})
     setFormError(null)
-    bodyTouchedRef.current = false
     setTaxonomy((current) => ({
       categories: mergeTaxonomyVocabulary(current.categories, post.categories),
       tags: mergeTaxonomyVocabulary(current.tags, post.tags),
@@ -259,9 +261,9 @@ export function PostWorkspace({
   const startNewPost = () => {
     setNotice(null)
     setForm(emptyPostForm())
+    setBodyKey((key) => key + 1)
     setFieldErrors({})
     setFormError(null)
-    bodyTouchedRef.current = false
     scrollEditorIntoView()
     requestAnimationFrame(() => document.getElementById("post-title")?.focus())
   }
@@ -274,7 +276,7 @@ export function PostWorkspace({
       const payload = await request<ApiEnvelope<unknown>>(`/admin/posts/${encodeURIComponent(id)}`)
       const post = normalizeAdminPost(payload?.data)
       if (!post) throw new Error(INVALID_POST)
-      applyPost(post)
+      applyPost(post, true)
     } catch (error) {
       setNotice({ kind: "error", message: errorText(error, "The post could not be opened.") })
     } finally {
@@ -287,7 +289,11 @@ export function PostWorkspace({
    * form is invalid (field errors are shown and no request is made).
    */
   const prepareForm = (): PostFormValues | null => {
-    const committed = commitPostFormDrafts(form)
+    // The editor reports changes as they commit; read its latest body so nothing typed is missed.
+    const latestBody = bodyEditorRef.current?.getMarkdown()
+    const committed = commitPostFormDrafts(
+      latestBody === undefined ? form : { ...form, body_markdown: latestBody }
+    )
     setForm(committed)
     setNotice(null)
     const errors = validatePostForm(committed)
@@ -405,9 +411,9 @@ export function PostWorkspace({
     try {
       await request<undefined>(`/admin/posts/${encodeURIComponent(id)}`, { method: "DELETE" })
       setForm(emptyPostForm())
+      setBodyKey((key) => key + 1)
       setFieldErrors({})
       setFormError(null)
-      bodyTouchedRef.current = false
       refreshPosts()
       setNotice({ kind: "success", message: "Post deleted." })
     } catch (error) {
@@ -429,8 +435,8 @@ export function PostWorkspace({
     const image: MediaItem = insertImage
     handledInsertRef.current = image
 
-    const snippet = markdownForMedia(image)
-    if (snippet === null) {
+    const source = imageForMedia(image)
+    if (source === null) {
       setNotice({
         kind: "error",
         message: "That image does not have a URL that can be inserted safely.",
@@ -439,37 +445,23 @@ export function PostWorkspace({
       return
     }
 
-    const textarea = bodyRef.current
-    const useSelection = bodyTouchedRef.current
-    const selectionStart = textarea !== null && useSelection ? textarea.selectionStart : null
-    const selectionEnd = textarea !== null && useSelection ? textarea.selectionEnd : null
-
-    setForm((current) => {
-      const body = current.body_markdown
-      const start = Math.min(Math.max(selectionStart ?? body.length, 0), body.length)
-      const end = Math.min(Math.max(selectionEnd ?? start, start), body.length)
-      const prefix = start > 0 && body[start - 1] !== "\n" ? "\n\n" : ""
-      const suffix = end < body.length && body[end] !== "\n" ? "\n\n" : ""
-      const inserted = `${prefix}${snippet}${suffix}`
-      pendingCaretRef.current = start + inserted.length
-      return { ...current, body_markdown: `${body.slice(0, start)}${inserted}${body.slice(end)}` }
-    })
+    // The editor inserts at its retained selection (or appends), syncs body_markdown through
+    // its change callback, and focuses itself.
+    const inserted = bodyEditorRef.current?.insertImage(source) ?? false
+    if (!inserted) {
+      setNotice({
+        kind: "error",
+        message: "The image could not be inserted into the post body. Try again from the Media tab.",
+      })
+      onImageInserted()
+      return
+    }
     setMedia((current) =>
       current.some((item) => item.id === image.id) ? current : [...current, image]
     )
-    setNotice({ kind: "success", message: "Image Markdown inserted into the post body." })
+    setNotice({ kind: "success", message: "Image inserted into the post body." })
     onImageInserted()
   }, [busy, insertImage, onImageInserted])
-
-  useEffect(() => {
-    const caret = pendingCaretRef.current
-    const textarea = bodyRef.current
-    if (caret === null || !textarea) return
-    pendingCaretRef.current = null
-    bodyTouchedRef.current = true
-    textarea.focus()
-    textarea.setSelectionRange(caret, caret)
-  }, [form.body_markdown])
 
   /* ---------- Rendering ---------- */
 
@@ -618,10 +610,8 @@ export function PostWorkspace({
           <PostEditor
             form={form}
             onChange={updateForm}
-            bodyRef={bodyRef}
-            onBodyFocus={() => {
-              bodyTouchedRef.current = true
-            }}
+            bodyEditorRef={bodyEditorRef}
+            bodyKey={bodyKey}
             fieldErrors={fieldErrors}
             formError={formError}
             taxonomy={taxonomy}

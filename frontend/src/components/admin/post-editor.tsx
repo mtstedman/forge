@@ -17,6 +17,7 @@ import {
   faqPayload,
   type FaqEntry,
 } from "@/components/admin/faq-editor"
+import { PostBodyEditor, type PostBodyEditorHandle } from "@/components/admin/post-body-editor"
 import {
   TaxonomyInput,
   commitTaxonomyDraft,
@@ -94,7 +95,7 @@ const FIELD_LABELS: Record<string, string> = {
   title: "Title",
   slug: "Slug",
   excerpt: "Excerpt",
-  body_markdown: "Markdown body",
+  body_markdown: "Body",
   category: "Category",
   categories: "Categories",
   tags: "Tags",
@@ -320,8 +321,10 @@ function StatusBadge({ status }: { status: PostStatus | null }): React.JSX.Eleme
 export type PostEditorProps = {
   form: PostFormValues
   onChange: (patch: Partial<PostFormValues>) => void
-  bodyRef: React.Ref<HTMLTextAreaElement>
-  onBodyFocus?: () => void
+  /** Imperative access to the body editor (latest Markdown, image insertion, focus). */
+  bodyEditorRef: React.Ref<PostBodyEditorHandle>
+  /** Changing this value replaces the body editor's content, selection and undo history. */
+  bodyKey: number
   fieldErrors: PostFieldErrors
   formError: string | null
   taxonomy: { categories: string[]; tags: string[] }
@@ -339,8 +342,8 @@ export type PostEditorProps = {
 export function PostEditor({
   form,
   onChange,
-  bodyRef,
-  onBodyFocus,
+  bodyEditorRef,
+  bodyKey,
   fieldErrors,
   formError,
   taxonomy,
@@ -550,27 +553,27 @@ export function PostEditor({
 
             <div className="space-y-2 md:col-span-2">
               <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <label className="text-sm font-medium" htmlFor="post-body">
-                  Markdown body
-                </label>
+                <span id="post-body-label" className="text-sm font-medium">
+                  Body
+                </span>
                 <span id="post-body-hint" className="text-xs text-muted-foreground">
-                  Insert images from the Media tab at the cursor position.
+                  Format with the toolbar. Insert images from the Media tab at the cursor
+                  position.
                 </span>
               </div>
-              <Textarea
-                ref={bodyRef}
+              <PostBodyEditor
+                key={bodyKey}
+                handleRef={bodyEditorRef}
                 id="post-body"
-                name="body_markdown"
-                rows={18}
-                className="min-h-80 font-mono text-sm leading-relaxed md:text-sm"
-                value={form.body_markdown}
-                aria-invalid={fieldErrors.body_markdown ? true : undefined}
-                aria-describedby={describedBy(
+                markdown={form.body_markdown}
+                labelledBy="post-body-label"
+                describedBy={describedBy(
                   "post-body-hint",
                   fieldErrors.body_markdown && "post-body-error"
                 )}
-                onFocus={onBodyFocus}
-                onChange={(event) => onChange({ body_markdown: event.target.value })}
+                invalid={Boolean(fieldErrors.body_markdown)}
+                disabled={disabled}
+                onChange={(body_markdown) => onChange({ body_markdown })}
               />
               <FieldError id="post-body-error" message={fieldErrors.body_markdown} />
             </div>
