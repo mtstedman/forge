@@ -46,8 +46,10 @@ const nextConfig: NextConfig = {
       { source: "/sitemap.php", destination: "/sitemap.xml", permanent: true },
 
       // Trailing-slash canonicalisation.
-      { source: "/resources", destination: "/resources/", permanent: true },
-      { source: "/admin", destination: "/admin/", permanent: true },
+      // Next allows an optional trailing slash in redirect matchers. Anchor
+      // these at the bare path so the destination cannot redirect to itself.
+      { source: "/resources((?!/)$)", destination: "/resources/", permanent: true },
+      { source: "/admin((?!/)$)", destination: "/admin/", permanent: true },
       { source: "/resources/:slug/", destination: "/resources/:slug", permanent: true },
     ];
   },

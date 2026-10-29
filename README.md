@@ -19,16 +19,19 @@ the Next.js application in `frontend/`.
 | API | `api.ancoratiming.com` | PHP web root at `api/public/` |
 | GitHub webhook | `deploy.ancoratiming.com/github` | Shared deployment listener |
 
-HTTPS and the signed push webhook are provisioned, but application deployment is
-not activated by this repository. Pushes do not publish files or restart a Next
-service.
+The signed `main` push webhook calls the deployment gate in
+`/home/mason/repos/deployment/forge/CI/deploy.sh`. That gate installs locked npm
+dependencies and compiles the TSX frontend with `npm run build` before publishing
+to `/var/www/ancoratiming.com/app/frontend/`, including `.next/` and the Next
+runtime. A failed build stops before publication.
 
-Production needs both a Node service running the built `frontend/` application
-and a website reverse proxy forwarding to it. The API continues to be served
-from `api/public/`; it is not moved behind the Next service. Host configuration,
-process supervision, reverse-proxy rules and activation instructions belong in
-the external deployment repository at `/home/mason/repos/deployment/forge/`.
-Nothing in this README claims that production activation has occurred.
+On the next successful deployment the gate installs/restarts
+`forge-frontend.service` on `127.0.0.1:3100` and installs the website nginx reverse
+proxy. The API remains at `app/api/public/`. Database files, uploads and runtime
+environment files are preserved. Frontend settings live separately in
+`app/frontend/.env.production.local`, initialized once from the public frontend
+settings in the existing API `.env`. Host configuration and deployment checks
+are maintained in `/home/mason/repos/deployment/forge/`.
 
 ## Repository layout
 
