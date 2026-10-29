@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Mail, MapPin, Phone } from "lucide-react"
+import { ArrowRight, Mail, MapPin, Phone } from "lucide-react"
 import { useState, type FormEvent } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -26,23 +26,30 @@ type SectionHeadingProps = {
   title: string
   id: string
   description?: string
+  eyebrowClassName?: string
 }
 
 const principles = [
   {
-    title: "Find the pattern",
-    description:
-      "A full movement and load assessment looks beyond the painful spot to understand why the problem keeps returning.",
+    marker: "60",
+    title: "Full 60-minute sessions",
+    description: "One-on-one for the entire hour. No aides, no splitting time between patients.",
   },
   {
-    title: "Build a clear plan",
-    description:
-      "Your protocol is specific to your goals, schedule and environment, with measurable milestones from the first session onward.",
+    marker: "1",
+    title: "Same provider, every visit",
+    description: "You work with Dr. Sperlak from the first assessment to your final session.",
   },
   {
-    title: "Return with confidence",
+    marker: "§",
+    title: "Root cause, then protocol",
     description:
-      "Rehab progresses into strength and conditioning so you are prepared for the demands of sport, work and everyday life.",
+      "A thorough assessment drives a rehabilitation plan specific to your body and goals.",
+  },
+  {
+    marker: "—",
+    title: "Conservative care first",
+    description: "The goal is to help you avoid unnecessary injections and surgeries.",
   },
 ] as const
 
@@ -123,18 +130,16 @@ const pricing = [
 const testimonials = [
   {
     quote:
-      "I felt listened to, understood the plan and knew exactly what I needed to do between sessions.",
-    attribution: "Forge patient, sports injury",
+      "Placeholder testimonial. Replace with a patient quote about recovering from a sports injury.",
+    attribution: "Patient name, sports injury",
   },
   {
-    quote:
-      "The goal was never just less pain. We rebuilt the strength and confidence I needed to train again.",
-    attribution: "Forge patient, post-surgical rehab",
+    quote: "Placeholder testimonial. Replace with a patient quote about post-surgical rehab.",
+    attribution: "Patient name, post-surgical rehab",
   },
   {
-    quote:
-      "Having care come to my gym made the work specific, practical and easy to carry into my routine.",
-    attribution: "Forge patient, back pain",
+    quote: "Placeholder testimonial. Replace with a patient quote about chronic back pain.",
+    attribution: "Patient name, chronic pain",
   },
 ] as const
 
@@ -178,10 +183,11 @@ function SectionHeading({
   title,
   id,
   description,
+  eyebrowClassName,
 }: SectionHeadingProps): React.JSX.Element {
   return (
     <div className="max-w-2xl">
-      <p className="mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary">
+      <p className={cn("mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary", eyebrowClassName)}>
         {eyebrow}
       </p>
       <h2 id={id} className="text-4xl font-semibold leading-[1.05] sm:text-5xl lg:text-6xl">
@@ -299,43 +305,40 @@ export function HomeSections({
       <section className="overflow-hidden border-b border-border/80" aria-labelledby="hero-title">
         <div className={cn(containerClass, "grid min-h-[calc(100svh-5rem)] items-center gap-12 py-16 lg:grid-cols-[1.12fr_0.88fr] lg:py-20")}>
           <div className="max-w-3xl">
-            <p className="mb-5 text-xs font-bold uppercase tracking-[0.22em] text-primary">
-              Mobile physical therapy · Twin Cities
-            </p>
-            <h1 id="hero-title" className="text-5xl font-semibold leading-[0.96] sm:text-6xl lg:text-7xl xl:text-8xl">
-              Rehab built for the life you want to <em className="text-primary">get back to.</em>
+            <h1 id="hero-title" className="text-5xl font-normal leading-[1.06] sm:text-6xl lg:text-7xl">
+              <span className="block text-balance">Find the root cause.</span>
+              <span className="block text-balance">
+                Then{" "}
+                <span className="font-semibold text-primary underline decoration-forge-gold decoration-1 underline-offset-[0.12em]">
+                  forge
+                </span>{" "}
+                your path to recovery.
+              </span>
             </h1>
-            <p className="mt-7 max-w-2xl text-lg leading-8 text-muted-foreground sm:text-xl">
-              One-on-one physical therapy that finds the source of pain, rebuilds strength and
-              prepares you for the work, sport and movement that matter to you.
+            <p className="mt-7 max-w-[52ch] text-lg leading-8 text-muted-foreground">
+              Private, one-on-one physical therapy with Dr. Joseph Sperlak, PT, DPT, CSCS. Full
+              60-minute sessions at your home or gym, with the same provider every appointment.
             </p>
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <a href="#contact" className={buttonVariants({ variant: "outline", size: "lg" })}>
-                Book a free 15-minute phone consult
+                Book a free 15-min phone consult
               </a>
-              <a href="#approach" className={buttonVariants({ variant: "default", size: "lg" })}>
-                See the approach
+              <a href="#services" className={buttonVariants({ variant: "ghost", size: "lg" })}>
+                What I treat
               </a>
             </div>
-            <ul className="mt-10 grid gap-3 border-t border-border pt-6 text-sm font-semibold sm:grid-cols-3" aria-label="Practice highlights">
-              {["Doctor-led care", "Your home or gym", "Full 60-minute sessions"].map((fact) => (
-                <li key={fact} className="flex items-center gap-2">
-                  <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                  {fact}
-                </li>
-              ))}
+            <ul className="mt-8 flex flex-wrap gap-2 text-xs font-semibold" aria-label="Credentials and service area">
+              <li className="rounded-sm border border-primary px-2.5 py-1 text-primary">DPT</li>
+              <li className="rounded-sm border border-primary px-2.5 py-1 text-primary">CSCS</li>
+              <li className="rounded-sm bg-secondary px-2.5 py-1 text-secondary-foreground">Twin Cities Metro, MN</li>
             </ul>
           </div>
           <figure
             className="relative min-h-[28rem] overflow-hidden rounded-[2rem] border bg-primary shadow-xl lg:min-h-[38rem]"
             role="img"
-            aria-label="Portrait placeholder for Dr. Joseph Sperlak"
+            aria-label="Photo placeholder: Joseph treating a patient at home or in a gym"
           >
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_20%,color-mix(in_oklab,var(--forge-gold)_45%,transparent),transparent_38%),linear-gradient(145deg,transparent_35%,color-mix(in_oklab,var(--forge-gold)_20%,transparent))]" />
-            <div className="absolute inset-x-8 bottom-8 rounded-xl border border-primary-foreground/20 bg-primary-foreground/10 p-6 text-primary-foreground backdrop-blur-sm">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-forge-gold">Care that travels</p>
-              <p className="mt-2 font-serif text-3xl font-semibold">Your goals. Your environment. Your plan.</p>
-            </div>
           </figure>
         </div>
       </section>
@@ -343,15 +346,15 @@ export function HomeSections({
       <section id="approach" className={sectionClass} aria-labelledby="approach-title">
         <div className={cn(containerClass, "grid gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:gap-20")}>
           <SectionHeading
-            eyebrow="I. The Forge approach"
-            title="Treat the cause. Train the solution."
+            eyebrow="I. Approach"
+            title="Treatment built around you, not a clinic schedule."
             id="approach-title"
-            description="Care is built around how your body moves in the real world, not a generic protocol or a crowded clinic schedule."
+            description="Every plan starts by identifying the root cause of your pain and dysfunction. From there, you get a specialized rehabilitation protocol designed to support sustainable lifestyle changes."
           />
           <div className="divide-y divide-border border-y border-border">
-            {principles.map((principle, index) => (
+            {principles.map((principle) => (
               <article key={principle.title} className="grid grid-cols-[2.5rem_1fr] gap-5 py-7 sm:grid-cols-[3.5rem_1fr] sm:py-9">
-                <span className="font-serif text-2xl text-primary">0{index + 1}</span>
+                <span className="font-serif text-2xl text-primary" aria-hidden="true">{principle.marker}</span>
                 <div>
                   <h3 className="text-2xl font-semibold sm:text-3xl">{principle.title}</h3>
                   <p className="mt-3 max-w-xl leading-7 text-muted-foreground">{principle.description}</p>
@@ -359,18 +362,27 @@ export function HomeSections({
               </article>
             ))}
           </div>
+          <div className="flex flex-wrap items-baseline gap-x-9 gap-y-3 border-y border-forge-gold py-5 lg:col-span-2">
+            <p className="font-serif text-2xl font-semibold">Care comes to you</p>
+            <p className="flex flex-wrap items-baseline gap-x-4 gap-y-2 text-sm">
+              <span>Home visits</span>
+              <span className="text-forge-gold" aria-hidden="true">·</span>
+              <span>At your gym or on-field</span>
+              <span className="text-forge-gold" aria-hidden="true">·</span>
+              <span className="text-muted-foreground">Serving the Twin Cities Metro Area</span>
+            </p>
+          </div>
         </div>
       </section>
 
       <section id="services" className={cn(sectionClass, "bg-primary text-primary-foreground")} aria-labelledby="services-title">
         <div className={containerClass}>
-          <div className="grid gap-8 lg:grid-cols-2 lg:items-end">
-            <SectionHeading eyebrow="II. What Forge treats" title="Care for pain, recovery and performance." id="services-title" />
-            <p className="max-w-xl text-base leading-8 text-primary-foreground/75 sm:text-lg">
-              Every plan starts with the demands you need to meet, whether that is a competition,
-              a rehearsal, a workday or simply moving without hesitation.
-            </p>
-          </div>
+          <SectionHeading
+            eyebrow="II. Services & conditions"
+            title="What I treat"
+            id="services-title"
+            eyebrowClassName="text-forge-gold"
+          />
           <div className="mt-14 grid border-t border-primary-foreground/20 md:grid-cols-2">
             {services.map((service) => (
               <article key={service.number} className="grid grid-cols-[2.5rem_1fr] gap-4 border-b border-primary-foreground/20 py-7 md:px-7 md:odd:border-r lg:grid-cols-[3rem_1fr] lg:py-9">

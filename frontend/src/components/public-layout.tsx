@@ -144,7 +144,7 @@ export function PublicLayout({
                       "mt-5 w-full"
                     )}
                   >
-                    Book a free 15-minute phone consult
+                    Book a free 15-min phone consult
                   </a>
                 </DialogClose>
               </nav>

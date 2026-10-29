@@ -13,7 +13,7 @@ type HomePageProps = {
   siteUrl: string
 }
 
-const title = "Forge Performance Therapy | Mobile Physical Therapy in the Twin Cities"
+const title = "Forge Performance Therapy — Twin Cities"
 const description =
   "One-on-one mobile physical therapy, rehabilitation and performance care with Dr. Joseph Sperlak, PT, DPT, CSCS across the Twin Cities."
 
