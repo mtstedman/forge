@@ -3,13 +3,16 @@
 import {
   CircleAlert,
   Globe,
+  ImageIcon,
+  ImagePlus,
   LoaderCircle,
   RefreshCw,
   Save,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import {
   FaqEditor,
@@ -17,6 +20,8 @@ import {
   faqPayload,
   type FaqEntry,
 } from "@/components/admin/faq-editor"
+import { readPublicApiUrl } from "@/components/admin/media-panel"
+import { MediaPickerDialog } from "@/components/admin/media-picker-dialog"
 import { PostBodyEditor, type PostBodyEditorHandle } from "@/components/admin/post-body-editor"
 import {
   TaxonomyInput,
@@ -37,6 +42,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { resolveMediaUrl } from "@/lib/api"
 import type { MediaItem } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -289,9 +295,6 @@ function describedBy(...ids: Array<string | false | null | undefined>): string |
   return value === "" ? undefined : value
 }
 
-const selectClassName =
-  "flex h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 py-1 text-base shadow-xs outline-none transition-[color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20"
-
 function FieldError({ id, message }: { id: string; message?: string }): React.JSX.Element | null {
   return message ? (
     <p id={id} className="text-sm text-destructive">
@@ -337,6 +340,10 @@ export type PostEditorProps = {
   mediaState: "loading" | "ready" | "error"
   mediaError: string | null
   onReloadMedia: () => void
+  /** Called with an image picked or uploaded through a picker so the library list includes it. */
+  onMediaAdded: (media: MediaItem) => void
+  /** Inserts a picked or uploaded image into the body at the editor's retained selection. */
+  onInsertBodyImage: (media: MediaItem) => void
   busy: EditorBusy
   onSave: () => void
   onPublish: () => void
@@ -356,6 +363,8 @@ export function PostEditor({
   mediaState,
   mediaError,
   onReloadMedia,
+  onMediaAdded,
+  onInsertBodyImage,
   busy,
   onSave,
   onPublish,
@@ -363,7 +372,14 @@ export function PostEditor({
   onDelete,
 }: PostEditorProps): React.JSX.Element {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false)
+  const [bodyImagePickerOpen, setBodyImagePickerOpen] = useState(false)
+  const [apiUrl, setApiUrl] = useState("")
   const disabled = busy !== null
+
+  useEffect(() => {
+    setApiUrl(readPublicApiUrl())
+  }, [])
   const isNew = form.id === null
   const isPublished = form.status === "published"
   const hasPendingDraft = isPublished && form.has_draft
@@ -374,8 +390,17 @@ export function PostEditor({
   const slugError = fieldErrors.slug ?? liveSlugError
   const categoriesError = fieldErrors.categories ?? fieldErrors.category
 
-  const coverMissing =
-    form.cover_media_id !== "" && !media.some((item) => String(item.id) === form.cover_media_id)
+  const coverItem =
+    form.cover_media_id === ""
+      ? null
+      : (media.find((item) => String(item.id) === form.cover_media_id) ?? null)
+  const coverMissing = form.cover_media_id !== "" && coverItem === null
+  const coverUrl = coverItem ? resolveMediaUrl(coverItem.url, apiUrl) : ""
+  const coverLabel = coverItem
+    ? mediaOptionLabel(coverItem)
+    : coverMissing
+      ? `Image ${form.cover_media_id} (not in library)`
+      : "No cover image"
 
   const errorEntries = Object.entries(fieldErrors)
   const heading = isNew ? "Create post" : form.title.trim() || "Edit post"
@@ -578,14 +603,24 @@ export function PostEditor({
             </div>
 
             <div className="space-y-2 md:col-span-2">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <span id="post-body-label" className="text-sm font-medium">
-                  Body
-                </span>
-                <span id="post-body-hint" className="text-xs text-muted-foreground">
-                  Format with the toolbar. Insert images from the Media tab at the cursor
-                  position.
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <div className="min-w-0 space-y-0.5">
+                  <span id="post-body-label" className="block text-sm font-medium">
+                    Body
+                  </span>
+                  <span id="post-body-hint" className="block text-xs text-muted-foreground">
+                    Format with the toolbar. Insert image adds a picture at the cursor position.
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBodyImagePickerOpen(true)}
+                  disabled={disabled}
+                >
+                  <ImagePlus aria-hidden="true" />
+                  Insert image
+                </Button>
               </div>
               <PostBodyEditor
                 key={bodyKey}
@@ -662,9 +697,9 @@ export function PostEditor({
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <label className="text-sm font-medium" htmlFor="post-cover">
+                <span id="post-cover-label" className="text-sm font-medium">
                   Cover image
-                </label>
+                </span>
                 <Button
                   variant="ghost"
                   size="icon-sm"
@@ -679,30 +714,66 @@ export function PostEditor({
                   />
                 </Button>
               </div>
-              <select
-                id="post-cover"
-                name="cover_media_id"
-                className={selectClassName}
-                value={form.cover_media_id}
-                aria-invalid={fieldErrors.cover_media_id ? true : undefined}
-                aria-describedby={describedBy(
-                  "post-cover-status",
-                  fieldErrors.cover_media_id && "post-cover-error"
+              <div
+                role="group"
+                aria-labelledby="post-cover-label"
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border bg-muted/20 p-2",
+                  fieldErrors.cover_media_id && "border-destructive"
                 )}
-                onChange={(event) => onChange({ cover_media_id: event.target.value })}
               >
-                <option value="">No cover image</option>
-                {media.map((item) => (
-                  <option key={item.id} value={String(item.id)}>
-                    {mediaOptionLabel(item)}
-                  </option>
-                ))}
-                {coverMissing ? (
-                  <option value={form.cover_media_id}>
-                    Image {form.cover_media_id} (not in library)
-                  </option>
-                ) : null}
-              </select>
+                <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/50">
+                  {coverUrl ? (
+                    // Admin-managed URLs may point at the separately hosted PHP API.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={coverUrl} alt="" className="size-full object-cover" />
+                  ) : (
+                    <ImageIcon className="size-6 text-muted-foreground" aria-hidden="true" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <p
+                    id="post-cover-summary"
+                    className={cn(
+                      "truncate text-sm",
+                      form.cover_media_id === "" ? "text-muted-foreground" : "font-medium"
+                    )}
+                    title={coverLabel}
+                  >
+                    {coverLabel}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      id="post-cover"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCoverPickerOpen(true)}
+                      disabled={disabled}
+                      aria-invalid={fieldErrors.cover_media_id ? true : undefined}
+                      aria-describedby={describedBy(
+                        "post-cover-summary",
+                        "post-cover-status",
+                        fieldErrors.cover_media_id && "post-cover-error"
+                      )}
+                    >
+                      <ImagePlus aria-hidden="true" />
+                      Choose cover image
+                    </Button>
+                    {form.cover_media_id !== "" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onChange({ cover_media_id: "" })}
+                        disabled={disabled}
+                        aria-label="Remove cover image"
+                      >
+                        <X aria-hidden="true" />
+                        Remove
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
               <p
                 id="post-cover-status"
                 className={cn(
@@ -716,7 +787,7 @@ export function PostEditor({
                   : mediaState === "error"
                     ? `Images could not be loaded: ${mediaError ?? "Unknown error."}`
                     : media.length === 0
-                      ? "Upload images in the Media tab to choose a cover."
+                      ? "No images in the library yet. Choose cover image to upload one."
                       : `${media.length} image${media.length === 1 ? "" : "s"} available.`}
               </p>
               <FieldError id="post-cover-error" message={fieldErrors.cover_media_id} />
@@ -764,6 +835,26 @@ export function PostEditor({
           </div>
         </fieldset>
       </form>
+
+      {/* Pickers render outside the form so their own forms never reach the post form. */}
+      <MediaPickerDialog
+        open={coverPickerOpen}
+        onOpenChange={setCoverPickerOpen}
+        title="Choose a cover image"
+        description="Pick a cover image from the media library or upload a new one."
+        selectedId={Number(form.cover_media_id) || null}
+        onSelect={(item) => {
+          onChange({ cover_media_id: String(item.id) })
+          onMediaAdded(item)
+        }}
+      />
+      <MediaPickerDialog
+        open={bodyImagePickerOpen}
+        onOpenChange={setBodyImagePickerOpen}
+        title="Insert an image"
+        description="Pick an image from the media library or upload a new one to insert at the cursor position."
+        onSelect={onInsertBodyImage}
+      />
 
       <Dialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
         <DialogContent>

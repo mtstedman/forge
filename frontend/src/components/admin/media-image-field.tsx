@@ -1,14 +1,13 @@
 "use client"
 
 import { FileImage, RefreshCw } from "lucide-react"
+import { useState } from "react"
 
+import { MediaPickerDialog } from "@/components/admin/media-picker-dialog"
 import { Button } from "@/components/ui/button"
 import { resolveMediaUrl } from "@/lib/api"
 import type { MediaItem } from "@/lib/types"
 import { cn } from "@/lib/utils"
-
-const selectClassName =
-  "flex h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 py-1 text-base shadow-xs outline-none transition-[color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20"
 
 export type MediaImageFieldProps = {
   label: string
@@ -54,8 +53,21 @@ export function MediaImageField({
   const statusId = `${id}-status`
   const errorId = `${id}-error`
   const error = errors[path]
-  const missing = value !== "" && !media.some((item) => item.url === value)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const selectedMedia = media.find((item) => item.url === value)
+  const selectionLabel = selectedMedia
+    ? mediaOptionLabel(selectedMedia)
+    : value !== ""
+      ? missingOptionLabel(value)
+      : "No image"
   const previewUrl = value !== "" ? resolveMediaUrl(value, apiUrl) : ""
+
+  const selectMedia = (item: MediaItem) => {
+    onChange(item.url)
+    if (!media.some((current) => current.id === item.id || current.url === item.url)) {
+      onReloadMedia()
+    }
+  }
 
   return (
     <div className="space-y-2">
@@ -88,23 +100,32 @@ export function MediaImageField({
           )}
         </div>
         <div className="min-w-0 flex-1 space-y-2">
-          <select
-            id={id}
-            className={selectClassName}
-            value={value}
-            disabled={disabled}
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? `${statusId} ${errorId}` : statusId}
-            onChange={(event) => onChange(event.currentTarget.value)}
-          >
-            <option value="">No image</option>
-            {media.map((item) => (
-              <option key={item.id} value={item.url}>
-                {mediaOptionLabel(item)}
-              </option>
-            ))}
-            {missing ? <option value={value}>{missingOptionLabel(value)}</option> : null}
-          </select>
+          <p className="truncate text-sm" title={selectionLabel}>
+            {selectionLabel}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              id={id}
+              type="button"
+              variant="outline"
+              disabled={disabled}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? `${statusId} ${errorId}` : statusId}
+              onClick={() => setPickerOpen(true)}
+            >
+              Choose image
+            </Button>
+            {value !== "" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={disabled}
+                onClick={() => onChange("")}
+              >
+                Remove
+              </Button>
+            ) : null}
+          </div>
           <p
             id={statusId}
             className={cn("text-xs", mediaState === "error" ? "text-destructive" : "text-muted-foreground")}
@@ -115,11 +136,18 @@ export function MediaImageField({
               : mediaState === "error"
                 ? `Images could not be loaded: ${mediaError ?? "Unknown error."}`
                 : media.length === 0
-                  ? "Upload images in the Media tab to choose one."
-                  : `${media.length} image${media.length === 1 ? "" : "s"} available.`}
+                  ? "Choose an image from the library or upload a new one."
+                  : `${media.length} image${media.length === 1 ? "" : "s"} available. Choose from the library or upload a new one.`}
           </p>
         </div>
       </div>
+      <MediaPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={selectMedia}
+        title={`Choose ${label.toLowerCase()}`}
+        selectedUrl={value}
+      />
       {error ? (
         <p id={errorId} className="text-sm text-destructive">
           {error}

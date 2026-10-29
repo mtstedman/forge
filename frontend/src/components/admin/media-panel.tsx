@@ -33,11 +33,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  ACCEPTED_IMAGE_TYPES,
+  ACCEPT_ATTRIBUTE,
+  mediaLabel,
+  normalizeMediaItem,
+} from "@/lib/admin-media"
 import { ApiError, resolveMediaUrl } from "@/lib/api"
 import type { ApiEnvelope, MediaItem } from "@/lib/types"
-
-const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
-const ACCEPT_ATTRIBUTE = "image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
 
 type LoadState = "loading" | "ready" | "error"
 type Notice = { kind: "success" | "error"; message: string }
@@ -51,37 +54,6 @@ function recordOf(value: unknown): Record<string, unknown> | null {
     ? (value as Record<string, unknown>)
     : null
 }
-
-function finiteNumber(value: unknown): number | null {
-  const number =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && value.trim() !== ""
-        ? Number(value)
-        : Number.NaN
-  return Number.isFinite(number) ? number : null
-}
-
-function normalizeMediaItem(value: unknown): MediaItem | null {
-  const row = recordOf(value)
-  if (!row) return null
-
-  const id = finiteNumber(row.id)
-  if (!Number.isInteger(id) || typeof row.url !== "string") return null
-
-  return {
-    id: id as number,
-    url: row.url,
-    original_name: typeof row.original_name === "string" ? row.original_name : "",
-    mime_type: typeof row.mime_type === "string" ? row.mime_type : "",
-    size_bytes: finiteNumber(row.size_bytes) ?? 0,
-    width: finiteNumber(row.width),
-    height: finiteNumber(row.height),
-    alt_text: typeof row.alt_text === "string" ? row.alt_text : null,
-    created_at: typeof row.created_at === "string" ? row.created_at : "",
-  }
-}
-
 export function readPublicApiUrl(): string {
   if (typeof document === "undefined") return ""
 
@@ -110,10 +82,6 @@ function formatDate(value: string): string {
   if (value === "") return "Upload date unavailable"
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-
-function mediaLabel(media: MediaItem): string {
-  return media.original_name || `Image ${media.id}`
 }
 
 export function MediaPanel({

@@ -429,6 +429,44 @@ export function PostWorkspace({
 
   /* ---------- Image insertion ---------- */
 
+  /** Adds a picked or uploaded image to the library list unless it is already present. */
+  const addMedia = useCallback((image: MediaItem) => {
+    setMedia((current) =>
+      current.some((item) => item.id === image.id) ? current : [...current, image]
+    )
+  }, [])
+
+  /**
+   * Inserts a media item into the body editor and reports the outcome through the notice.
+   * Shared by the Media-tab flow and the in-editor picker; callers enforce the busy guard.
+   */
+  const insertMediaIntoBody = useCallback(
+    (image: MediaItem, retryHint: string): void => {
+      const source = imageForMedia(image)
+      if (source === null) {
+        setNotice({
+          kind: "error",
+          message: "That image does not have a URL that can be inserted safely.",
+        })
+        return
+      }
+
+      // The editor inserts at its retained selection (or appends), syncs body_markdown through
+      // its change callback, and focuses itself.
+      const inserted = bodyEditorRef.current?.insertImage(source) ?? false
+      if (!inserted) {
+        setNotice({
+          kind: "error",
+          message: `The image could not be inserted into the post body. ${retryHint}`,
+        })
+        return
+      }
+      addMedia(image)
+      setNotice({ kind: "success", message: "Image inserted into the post body." })
+    },
+    [addMedia]
+  )
+
   useEffect(() => {
     if (insertImage === null) {
       handledInsertRef.current = null
@@ -439,33 +477,22 @@ export function PostWorkspace({
     const image: MediaItem = insertImage
     handledInsertRef.current = image
 
-    const source = imageForMedia(image)
-    if (source === null) {
-      setNotice({
-        kind: "error",
-        message: "That image does not have a URL that can be inserted safely.",
-      })
-      onImageInserted()
-      return
-    }
-
-    // The editor inserts at its retained selection (or appends), syncs body_markdown through
-    // its change callback, and focuses itself.
-    const inserted = bodyEditorRef.current?.insertImage(source) ?? false
-    if (!inserted) {
-      setNotice({
-        kind: "error",
-        message: "The image could not be inserted into the post body. Try again from the Media tab.",
-      })
-      onImageInserted()
-      return
-    }
-    setMedia((current) =>
-      current.some((item) => item.id === image.id) ? current : [...current, image]
-    )
-    setNotice({ kind: "success", message: "Image inserted into the post body." })
+    insertMediaIntoBody(image, "Try again from the Media tab.")
     onImageInserted()
-  }, [busy, insertImage, onImageInserted])
+  }, [busy, insertImage, insertMediaIntoBody, onImageInserted])
+
+  const insertPickedBodyImage = (image: MediaItem) => {
+    // Mirror the Media-tab guard: in-flight loads/saves could overwrite the insertion.
+    if (busy !== null) {
+      addMedia(image)
+      setNotice({
+        kind: "error",
+        message: "Wait for the current action to finish, then insert the image again.",
+      })
+      return
+    }
+    insertMediaIntoBody(image, "Try again.")
+  }
 
   /* ---------- Rendering ---------- */
 
@@ -625,6 +652,8 @@ export function PostWorkspace({
             mediaState={mediaState}
             mediaError={mediaError}
             onReloadMedia={() => void loadMedia()}
+            onMediaAdded={addMedia}
+            onInsertBodyImage={insertPickedBodyImage}
             busy={busy}
             onSave={() => void savePost()}
             onPublish={() => void publishPost()}
