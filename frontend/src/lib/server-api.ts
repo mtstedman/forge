@@ -1,5 +1,9 @@
 import { ApiError, requestJson } from "@/lib/api"
 import { getFrontendConfig } from "@/lib/config.server"
+import {
+  normalizeMainPageContentResponse,
+  type MainPageContent,
+} from "@/lib/main-page-content"
 import type {
   PostDetail,
   PostSummary,
@@ -138,6 +142,11 @@ async function getJson(path: string): Promise<unknown> {
   } finally {
     clearTimeout(timeout)
   }
+}
+
+export async function getMainPageContent(): Promise<MainPageContent> {
+  const payload = await getJson("/main-page-content")
+  return normalizeMainPageContentResponse(payload)
 }
 
 export async function getPosts(

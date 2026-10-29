@@ -10,8 +10,10 @@ use Forge\Api\Controller\AdminCommentController;
 use Forge\Api\Controller\AdminConsultationRequestController;
 use Forge\Api\Controller\AdminMediaController;
 use Forge\Api\Controller\AdminPostController;
+use Forge\Api\Controller\MainPageContentController;
 use Forge\Api\Repository\AdminSessionRepository;
 use Forge\Api\Repository\AdminUserRepository;
+use Forge\Api\Repository\MainPageContentRepository;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -25,6 +27,7 @@ final class AdminRoutes
         $comments = new AdminCommentController($pdo);
         $consultations = new AdminConsultationRequestController($pdo);
         $media = new AdminMediaController($pdo, $config);
+        $mainPageContent = new MainPageContentController(new MainPageContentRepository($pdo));
         $auth = new AdminAuthController(new AdminUserRepository($pdo), new AdminSessionRepository($pdo));
 
         $group->post('/logout', [$auth, 'logout']);
@@ -60,5 +63,8 @@ final class AdminRoutes
         $group->get('/media', [$media, 'index']);
         $group->post('/media', [$media, 'upload']);
         $group->delete('/media/{id:[0-9]+}', [$media, 'delete']);
+
+        $group->get('/main-page-content', [$mainPageContent, 'adminShow']);
+        $group->put('/main-page-content', [$mainPageContent, 'update']);
     }
 }

@@ -4,6 +4,7 @@ import {
   ClipboardList,
   FileText,
   Images,
+  LayoutDashboard,
   LoaderCircle,
   LogOut,
   MessageSquare,
@@ -15,13 +16,14 @@ import { useAdminAuth } from "@/components/admin/auth-provider"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-type AdminTab = "posts" | "media" | "comments" | "consultations"
+type AdminTab = "main-page" | "posts" | "media" | "comments" | "consultations"
 
 const tabs: Array<{
   id: AdminTab
   label: string
   icon: typeof FileText
 }> = [
+  { id: "main-page", label: "Main Page", icon: LayoutDashboard },
   { id: "posts", label: "Posts", icon: FileText },
   { id: "media", label: "Media", icon: Images },
   { id: "comments", label: "Comments", icon: MessageSquare },

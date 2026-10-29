@@ -9,12 +9,13 @@ import { AdminAuthProvider, useAdminAuth } from "@/components/admin/auth-provide
 import { CommentsPanel } from "@/components/admin/comments-panel"
 import { ConsultationsPanel } from "@/components/admin/consultations-panel"
 import { AdminLogin } from "@/components/admin/login"
+import { MainPageContentEditor } from "@/components/admin/main-page-content-editor"
 import { MediaPanel } from "@/components/admin/media-panel"
 import { PostWorkspace } from "@/components/admin/post-workspace"
 import { getFrontendConfig } from "@/lib/config.server"
 import type { MediaItem, PublicConfig } from "@/lib/types"
 
-type AdminTab = "posts" | "media" | "comments" | "consultations"
+type AdminTab = "main-page" | "posts" | "media" | "comments" | "consultations"
 
 type AdminPageProps = {
   /** Explicit public subset only; server-side settings are never serialized. */
@@ -130,7 +131,10 @@ function AdminWorkspace({ ssoEnabled }: { ssoEnabled: boolean }): React.JSX.Elem
 
   return (
     <AdminLayout active={active} onNavigate={setActive}>
-      {/* The post editor stays mounted so tab changes never discard unsaved edits. */}
+      {/* Editors stay mounted so tab changes never discard unsaved work. */}
+      <section aria-label="Main Page" hidden={active !== "main-page"}>
+        <MainPageContentEditor />
+      </section>
       <section aria-label="Posts" hidden={active !== "posts"}>
         <PostWorkspace insertImage={pendingImage} onImageInserted={imageInserted} />
       </section>

@@ -833,6 +833,146 @@ final class AdminApiTest extends TestCase
         self::assertSame(['error' => 'Consultation request not found.'], $this->decode($missing));
     }
 
+    public function testMainPageContentAdminReadReturnsTheSeededDocument(): void
+    {
+        $response = $this->request('GET', '/admin/main-page-content');
+        $json = $this->decode($response);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(['data'], array_keys($json));
+        $data = $json['data'];
+        self::assertSame(
+            ['seo', 'hero', 'approach', 'services', 'about', 'pricing', 'testimonials', 'resources', 'faq', 'contact'],
+            array_keys($data),
+        );
+        self::assertSame('Find the root cause. Then forge your path to recovery.', $data['hero']['heading']);
+        self::assertSame(['60', '1', '§', '—'], array_column($data['approach']['principles'], 'marker'));
+        self::assertSame(['i.', 'ii.', 'iii.', 'iv.', 'v.', 'vi.'], array_column($data['services']['items'], 'number'));
+        self::assertSame([false, true, false], array_column($data['pricing']['items'], 'featured'));
+        self::assertCount(5, $data['about']['credentials']);
+        self::assertCount(3, $data['testimonials']['items']);
+        self::assertCount(6, $data['faq']['items']);
+        self::assertSame('Request my free consult', $data['contact']['form']['submit_label']);
+
+        $public = $this->request('GET', '/main-page-content', null, false);
+        self::assertSame(200, $public->getStatusCode());
+        self::assertSame(['data' => $data], $this->decode($public));
+    }
+
+    public function testMainPageContentFullUpdateRoundTripsPersistsAndIsReflectedPublicly(): void
+    {
+        $document = $this->mainPageContent();
+        $document['hero']['heading'] = 'Move well again.';
+        $document['hero']['credential_chips'] = [];
+        $document['services']['items'] = array_reverse($document['services']['items']);
+        $document['pricing']['items'][0]['featured'] = true;
+        $document['pricing']['items'][1]['featured'] = false;
+        $document['testimonials']['items'][] = ['quote' => 'Back on the field in six weeks.', 'attribution' => 'Sam, soccer player'];
+        $document['faq']['items'] = [['question' => 'Is parking needed?', 'answer' => "No.\nSessions come to you."]];
+        $document['contact']['email'] = 'care@forge.example';
+
+        $response = $this->request('PUT', '/admin/main-page-content', $document);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['data' => $document], $this->decode($response));
+
+        self::assertSame($document, $this->mainPageContent());
+        $public = $this->request('GET', '/main-page-content', null, false);
+        self::assertSame(200, $public->getStatusCode());
+        self::assertStringContainsString('public', $public->getHeaderLine('Cache-Control'));
+        self::assertSame(['data' => $document], $this->decode($public));
+        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM main_page_content')->fetchColumn());
+
+        // Reapplying the schema never overwrites an administrator-edited document.
+        Migrator::migrate($this->pdo);
+        self::assertSame($document, $this->mainPageContent());
+    }
+
+    public function testMainPageContentAdminEndpointsRequireAuthentication(): void
+    {
+        $before = $this->mainPageContent();
+
+        $read = $this->request('GET', '/admin/main-page-content', null, false);
+        self::assertSame(401, $read->getStatusCode());
+        self::assertStringNotContainsString('Find the root cause', (string) $read->getBody());
+
+        $changed = $before;
+        $changed['hero']['heading'] = 'Unauthorized edit';
+        $write = $this->request('PUT', '/admin/main-page-content', $changed, false);
+        self::assertSame(401, $write->getStatusCode());
+        self::assertSame($before, $this->mainPageContent());
+
+        self::assertSame(200, $this->request('GET', '/main-page-content', null, false)->getStatusCode());
+    }
+
+    public function testMainPageContentRejectsMalformedDocumentsWithFieldPathsAndKeepsStoredContent(): void
+    {
+        $before = $this->mainPageContent();
+
+        $invalid = $before;
+        unset($invalid['hero']['heading'], $invalid['contact']['form']['submit_label']);
+        $invalid['seo']['title'] = str_repeat('a', 121);
+        $invalid['hero']['credential_chips'] = ['DPT', ['CSCS']];
+        $invalid['approach']['principles'][2] = 'not an object';
+        $invalid['services']['items'][1]['title'] = 5;
+        $invalid['about']['name'] = '   ';
+        $invalid['about']['credentials'] = 'DPT';
+        $invalid['pricing']['items'][0]['featured'] = 'yes';
+        $invalid['testimonials']['items'][0] = ['quote' => 'Missing attribution', 'html' => '<b>bold</b>'];
+        $invalid['resources']['footer_html'] = '<p>Injected</p>';
+        $invalid['faq']['items'] = array_fill(0, 21, ['question' => 'Q?', 'answer' => 'A.']);
+        $invalid['contact']['email'] = 'not-an-email';
+
+        $response = $this->request('PUT', '/admin/main-page-content', $invalid);
+        $json = $this->decode($response);
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame('Validation failed.', $json['error']);
+        self::assertSame([
+            'seo.title' => 'Must be at most 120 characters.',
+            'hero.heading' => 'This field is required.',
+            'hero.credential_chips.1' => 'Must be a string.',
+            'approach.principles.2' => 'Must be an object.',
+            'services.items.1.title' => 'Must be a string.',
+            'about.name' => 'This field is required.',
+            'about.credentials' => 'Must be a list.',
+            'pricing.items.0.featured' => 'Must be true or false.',
+            'testimonials.items.0.attribution' => 'This field is required.',
+            'testimonials.items.0.html' => 'Unknown field.',
+            'resources.footer_html' => 'Unknown field.',
+            'faq.items' => 'Use at most 20 items.',
+            'contact.email' => 'Must be a valid email address.',
+            'contact.form.submit_label' => 'This field is required.',
+        ], $json['fields']);
+        self::assertSame($before, $this->mainPageContent());
+
+        $partial = $before;
+        unset($partial['contact']);
+        $partial['approach']['principles'] = [];
+        $partial['about']['biography'] = "Bell\x07 character";
+        $response = $this->request('PUT', '/admin/main-page-content', $partial);
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame([
+            'approach.principles' => 'Add at least 1 item.',
+            'about.biography' => 'Must not contain control characters.',
+            'contact' => 'This field is required.',
+        ], $this->decode($response)['fields']);
+        self::assertSame($before, $this->mainPageContent());
+
+        $notAnObject = $this->request('PUT', '/admin/main-page-content', [$before]);
+        self::assertSame(422, $notAnObject->getStatusCode());
+        self::assertArrayHasKey('body', $this->decode($notAnObject)['fields']);
+        self::assertSame($before, $this->mainPageContent());
+    }
+
+    /** @return array<string, mixed> */
+    private function mainPageContent(): array
+    {
+        $response = $this->request('GET', '/admin/main-page-content');
+        self::assertSame(200, $response->getStatusCode());
+
+        return $this->decode($response)['data'];
+    }
+
     /** @param array<string, mixed> $overrides @return array<string, mixed> */
     private function consultationPayload(array $overrides = []): array
     {

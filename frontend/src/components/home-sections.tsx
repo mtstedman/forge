@@ -15,10 +15,12 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ApiError, requestJson } from "@/lib/api"
+import type { MainPageContent } from "@/lib/main-page-content"
 import type { ConsultationBestTime, ConsultationRequestInput, PostSummary } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 type HomeSectionsProps = {
+  content: MainPageContent
   posts: PostSummary[]
   resourcesUnavailable: boolean
   apiUrl: string
@@ -32,152 +34,6 @@ type SectionHeadingProps = {
   description?: string
   eyebrowClassName?: string
 }
-
-const principles = [
-  {
-    marker: "60",
-    title: "Full 60-minute sessions",
-    description: "One-on-one for the entire hour. No aides, no splitting time between patients.",
-  },
-  {
-    marker: "1",
-    title: "Same provider, every visit",
-    description: "You work with Dr. Sperlak from the first assessment to your final session.",
-  },
-  {
-    marker: "§",
-    title: "Root cause, then protocol",
-    description:
-      "A thorough assessment drives a rehabilitation plan specific to your body and goals.",
-  },
-  {
-    marker: "—",
-    title: "Conservative care first",
-    description: "The goal is to help you avoid unnecessary injections and surgeries.",
-  },
-] as const
-
-const services = [
-  {
-    number: "i.",
-    title: "Sports injuries",
-    description:
-      "Sprains, strains, tendon pain and overuse injuries, with a return-to-sport plan for training and competition.",
-  },
-  {
-    number: "ii.",
-    title: "Post-surgical rehab",
-    description:
-      "Structured recovery after joint, ligament and spine procedures, progressing from early mobility to full strength.",
-  },
-  {
-    number: "iii.",
-    title: "Back & neck pain",
-    description:
-      "Assessment of posture, movement and load to address the source of spinal pain, not only the symptoms.",
-  },
-  {
-    number: "iv.",
-    title: "Chronic pain",
-    description:
-      "Gradual, measurable plans for long-standing pain that hasn't resolved with rest, medication or prior treatment.",
-  },
-  {
-    number: "v.",
-    title: "Performing arts & dancers",
-    description:
-      "Care for the range, control and repetitive demands of dance and performance, built around rehearsal schedules.",
-  },
-  {
-    number: "vi.",
-    title: "Work injuries",
-    description:
-      "Rehab for lifting, repetitive-motion and job-related injuries, focused on a safe return to full duty.",
-  },
-] as const
-
-const credentials = [
-  ["Doctor of Physical Therapy", "DPT"],
-  ["Certified Strength & Conditioning Specialist", "CSCS"],
-  ["Collegiate strength & conditioning coach", "Coaching"],
-  ["Self-trained Ironman & Strongman athlete", "Athlete"],
-  ["Hyrox competitor", "Athlete"],
-] as const
-
-const pricing = [
-  {
-    step: "Step 1",
-    title: "Free phone consult",
-    price: "$0",
-    detail: "15 min",
-    description: "Talk through what's going on and whether Forge is the right fit.",
-  },
-  {
-    step: "Step 2",
-    title: "In-person initial consultation",
-    price: "$49.99",
-    detail: "",
-    description:
-      "A hands-on assessment at your home or gym to identify the root cause of your pain.",
-    featured: true,
-  },
-  {
-    step: "Step 3",
-    title: "Your protocol",
-    price: "60",
-    detail: "min sessions",
-    description:
-      "A specialized rehabilitation plan with one-on-one sessions, always with the same provider.",
-  },
-] as const
-
-const testimonials = [
-  {
-    quote:
-      "Placeholder testimonial. Replace with a patient quote about recovering from a sports injury.",
-    attribution: "Patient name, sports injury",
-  },
-  {
-    quote: "Placeholder testimonial. Replace with a patient quote about post-surgical rehab.",
-    attribution: "Patient name, post-surgical rehab",
-  },
-  {
-    quote: "Placeholder testimonial. Replace with a patient quote about chronic back pain.",
-    attribution: "Patient name, chronic pain",
-  },
-] as const
-
-const faqs = [
-  {
-    question: "Do I need a doctor's referral?",
-    answer:
-      "Minnesota allows direct access to physical therapy, so you can typically start without a referral. We'll confirm what applies to you during the phone consult.",
-  },
-  {
-    question: "Do you take insurance?",
-    answer:
-      "Forge is a cash-based, out-of-network practice. You pay at the time of service. If your plan offers out-of-network benefits, you can request documentation to submit for possible reimbursement.",
-  },
-  {
-    question: "What does the $49.99 initial consultation include?",
-    answer:
-      "An in-person assessment at your home or gym to identify the root cause of your pain or dysfunction, followed by a recommended rehabilitation plan.",
-  },
-  {
-    question: "Where do sessions take place?",
-    answer:
-      "At your home, your gym, or on-field, anywhere in the Twin Cities Metro Area. There is no clinic to travel to.",
-  },
-  {
-    question: "How long is each session?",
-    answer: "Every session is a full 60 minutes, one-on-one with Dr. Sperlak.",
-  },
-  {
-    question: "How many visits will I need?",
-    answer:
-      "It depends on your condition and goals. You'll get a clear plan after your initial consultation, designed for lasting results rather than an open-ended schedule.",
-  },
-] as const
 
 const sectionClass = "scroll-mt-(--site-header-height) border-t border-border/80 py-20 sm:py-24 lg:py-28"
 const containerClass = "mx-auto max-w-7xl px-5 sm:px-8 lg:px-10"
@@ -223,6 +79,7 @@ function formatPostDate(value: string | null): string {
 type ConsultationFormProps = {
   apiUrl: string
   turnstileSiteKey: string
+  contact: MainPageContent["contact"]
 }
 
 type ConsultationField =
@@ -260,10 +117,6 @@ const CONSULTATION_FIELD_IDS: Record<Exclude<ConsultationField, "captcha_token">
 
 const BEST_TIMES: readonly ConsultationBestTime[] = ["Morning", "Midday", "Afternoon", "Evening"]
 
-const CAPTCHA_RETRY_MESSAGE =
-  "The security check wasn't accepted. Please complete it again and resend."
-const CONTACT_FALLBACK = "or call (612) 555-0148 or email hello@forgeperformance.com."
-
 function isBestTime(value: string): value is ConsultationBestTime {
   return (BEST_TIMES as readonly string[]).includes(value)
 }
@@ -277,28 +130,33 @@ function isPendingResponse(value: unknown): boolean {
   )
 }
 
-function consultationError(error: unknown): {
+function consultationError(
+  error: unknown,
+  contact: MainPageContent["contact"]
+): {
   message: string
   fields: Partial<Record<ConsultationField, string>>
 } {
-  const generic = `Your request could not be sent. Your details are still here, so please try again, ${CONTACT_FALLBACK}`
+  const generic = contact.form.generic_error_message
+  const contactFallback = `or call ${contact.phone} or email ${contact.email}.`
   if (!(error instanceof ApiError)) return { message: generic, fields: {} }
 
   switch (error.status) {
     case 0:
       return {
-        message: `We couldn't reach the server. Your details are still here. Check your connection and try again, ${CONTACT_FALLBACK}`,
+        message: `We couldn't reach the server. Your details are still here. Check your connection and try again, ${contactFallback}`,
         fields: {},
       }
     case 422: {
       const fields: Partial<Record<ConsultationField, string>> = {}
       for (const [key, value] of Object.entries(error.fields)) {
         if (value === "" || !(CONSULTATION_FIELDS as readonly string[]).includes(key)) continue
-        fields[key as ConsultationField] = key === "captcha_token" ? CAPTCHA_RETRY_MESSAGE : value
+        fields[key as ConsultationField] =
+          key === "captcha_token" ? contact.form.captcha_retry_message : value
       }
       const keys = Object.keys(fields)
       if (keys.length === 1 && keys[0] === "captcha_token") {
-        return { message: CAPTCHA_RETRY_MESSAGE, fields }
+        return { message: contact.form.captcha_retry_message, fields }
       }
       return {
         message:
@@ -315,7 +173,7 @@ function consultationError(error: unknown): {
       }
     case 503:
       return {
-        message: `Online requests are temporarily unavailable. Your details are still here, so please try again shortly, ${CONTACT_FALLBACK}`,
+        message: `Online requests are temporarily unavailable. Your details are still here, so please try again shortly, ${contactFallback}`,
         fields: {},
       }
     default:
@@ -323,7 +181,7 @@ function consultationError(error: unknown): {
   }
 }
 
-function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): React.JSX.Element {
+function ConsultationForm({ apiUrl, turnstileSiteKey, contact }: ConsultationFormProps): React.JSX.Element {
   const baseUrl = apiUrl.trim().replace(/\/+$/, "")
   const formRef = useRef<HTMLFormElement>(null)
   const submittingRef = useRef(false)
@@ -363,7 +221,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
     if (!canSubmit) {
       setStatus({
         state: "error",
-        message: `Online requests are unavailable right now. Please call (612) 555-0148 or email hello@forgeperformance.com.`,
+        message: `Online requests are unavailable right now. Please call ${contact.phone} or email ${contact.email}.`,
       })
       return
     }
@@ -397,7 +255,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
 
     submittingRef.current = true
     setFieldErrors({})
-    setStatus({ state: "sending", message: "Sending your request…" })
+    setStatus({ state: "sending", message: contact.form.sending_label })
 
     try {
       const response = await requestJson<unknown>(baseUrl, "/consultation-requests", {
@@ -412,13 +270,9 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
 
       formRef.current?.reset()
       setConsent(false)
-      setStatus({
-        state: "success",
-        message:
-          "Thank you. Your request was received, and Joseph will contact you to schedule your free consultation.",
-      })
+      setStatus({ state: "success", message: contact.form.success_message })
     } catch (error) {
-      const { message: errorMessage, fields } = consultationError(error)
+      const { message: errorMessage, fields } = consultationError(error, contact)
       setFieldErrors(fields)
       setStatus({ state: "error", message: errorMessage })
 
@@ -464,7 +318,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="space-y-2">
           <label className="text-sm font-semibold" htmlFor="consult-name">
-            Name
+            {contact.form.name_label}
           </label>
           <Input
             id="consult-name"
@@ -479,7 +333,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
         </div>
         <div className="space-y-2">
           <label className="text-sm font-semibold" htmlFor="consult-phone">
-            Phone
+            {contact.form.phone_label}
           </label>
           <Input
             id="consult-phone"
@@ -496,7 +350,12 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
       </div>
       <div className="mt-5 space-y-2">
         <label className="text-sm font-semibold" htmlFor="consult-email">
-          Email <span className="font-normal text-muted-foreground">(optional)</span>
+          {contact.form.email_label}{" "}
+          {contact.form.email_optional_label ? (
+            <span className="font-normal text-muted-foreground">
+              {contact.form.email_optional_label}
+            </span>
+          ) : null}
         </label>
         <Input
           id="consult-email"
@@ -511,7 +370,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
       </div>
       <div className="mt-5 space-y-2">
         <label className="text-sm font-semibold" htmlFor="consult-time">
-          Best time to call
+          {contact.form.best_time_label}
         </label>
         <select
           id="consult-time"
@@ -531,7 +390,12 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
       </div>
       <div className="mt-5 space-y-2">
         <label className="text-sm font-semibold" htmlFor="consult-message">
-          What's going on? <span className="font-normal text-muted-foreground">(optional)</span>
+          {contact.form.message_label}{" "}
+          {contact.form.message_optional_label ? (
+            <span className="font-normal text-muted-foreground">
+              {contact.form.message_optional_label}
+            </span>
+          ) : null}
         </label>
         <Textarea
           id="consult-message"
@@ -558,9 +422,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
             className="mt-1 size-4 shrink-0 cursor-pointer accent-primary outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           />
           <label htmlFor="consult-consent" className="text-sm leading-6">
-            I agree to share this information with Forge Performance Therapy for the purpose of
-            contacting me about my consultation only. Forge will never sell or share the information
-            I submit.
+            {contact.form.consent_label}
           </label>
         </div>
         <p id="consult-consent-privacy" className="pl-7 text-xs leading-5 text-muted-foreground">
@@ -588,15 +450,18 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
       ) : (
         <p className="mt-6 text-sm leading-6 text-destructive" role="status">
           Online consultation requests are unavailable right now. Please call{" "}
-          <a className="font-semibold text-foreground underline underline-offset-4" href="tel:+16125550148">
-            (612) 555-0148
+          <a
+            className="font-semibold text-foreground underline underline-offset-4"
+            href={`tel:${contact.phone.replace(/[^+\d]/g, "")}`}
+          >
+            {contact.phone}
           </a>{" "}
           or email{" "}
           <a
             className="break-all font-semibold text-foreground underline underline-offset-4"
-            href="mailto:hello@forgeperformance.com"
+            href={`mailto:${contact.email}`}
           >
-            hello@forgeperformance.com
+            {contact.email}
           </a>{" "}
           to book your free consultation.
         </p>
@@ -608,7 +473,7 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
         type="submit"
         disabled={sending || !canSubmit}
       >
-        {sending ? "Sending…" : "Request my free consult"}
+        {sending ? contact.form.sending_label : contact.form.submit_label}
       </button>
 
       <div role="status" aria-live="polite" className="mt-5 empty:hidden">
@@ -631,50 +496,88 @@ function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): 
 }
 
 export function HomeSections({
+  content,
   posts,
   resourcesUnavailable,
   apiUrl,
   turnstileSiteKey,
 }: HomeSectionsProps): React.JSX.Element {
   const latestPosts = posts.slice(0, 3)
+  const sentenceBreak = content.hero.heading.indexOf(". ")
+  const headingLines =
+    sentenceBreak === -1
+      ? [content.hero.heading]
+      : [
+          content.hero.heading.slice(0, sentenceBreak + 1),
+          content.hero.heading.slice(sentenceBreak + 2),
+        ]
+  const telephoneHref = `tel:${content.contact.phone.replace(/[^+\d]/g, "")}`
 
   return (
     <>
       <section className="overflow-hidden border-b border-border/80" aria-labelledby="hero-title">
-        <div className={cn(containerClass, "grid min-h-[calc(100svh-5rem)] items-center gap-12 py-16 lg:grid-cols-[1.12fr_0.88fr] lg:py-20")}>
+        <div
+          className={cn(
+            containerClass,
+            "grid min-h-[calc(100svh-5rem)] items-center gap-12 py-16 lg:grid-cols-[1.12fr_0.88fr] lg:py-20"
+          )}
+        >
           <div className="max-w-3xl">
+            {content.hero.eyebrow ? (
+              <p className="mb-5 text-xs font-bold uppercase tracking-[0.22em] text-primary">
+                {content.hero.eyebrow}
+              </p>
+            ) : null}
             <h1 id="hero-title" className="text-5xl font-normal leading-[1.06] sm:text-6xl lg:text-7xl">
-              <span className="block text-balance">Find the root cause.</span>
-              <span className="block text-balance">
-                Then{" "}
-                <span className="font-semibold text-primary underline decoration-forge-gold decoration-1 underline-offset-[0.12em]">
-                  forge
-                </span>{" "}
-                your path to recovery.
-              </span>
+              {headingLines.map((line, lineIndex) => (
+                <span key={`${lineIndex}-${line}`} className="block text-balance">
+                  {line.split(/(forge)/gi).map((part, partIndex) =>
+                    part.toLowerCase() === "forge" ? (
+                      <span
+                        key={`${partIndex}-${part}`}
+                        className="font-semibold text-primary underline decoration-forge-gold decoration-1 underline-offset-[0.12em]"
+                      >
+                        {part}
+                      </span>
+                    ) : (
+                      part
+                    )
+                  )}
+                </span>
+              ))}
             </h1>
             <p className="mt-7 max-w-[52ch] text-lg leading-8 text-muted-foreground">
-              Private, one-on-one physical therapy with Dr. Joseph Sperlak, PT, DPT, CSCS. Full
-              60-minute sessions at your home or gym, with the same provider every appointment.
+              {content.hero.introduction}
             </p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <a href="#contact" className={buttonVariants({ variant: "outline", size: "lg" })}>
-                Book a free 15-min phone consult
+                {content.hero.primary_cta_label}
               </a>
               <a href="#services" className={buttonVariants({ variant: "ghost", size: "lg" })}>
-                What I treat
+                {content.hero.secondary_cta_label}
               </a>
             </div>
-            <ul className="mt-8 flex flex-wrap gap-2 text-xs font-semibold" aria-label="Credentials and service area">
-              <li className="rounded-sm border border-primary px-2.5 py-1 text-primary">DPT</li>
-              <li className="rounded-sm border border-primary px-2.5 py-1 text-primary">CSCS</li>
-              <li className="rounded-sm bg-secondary px-2.5 py-1 text-secondary-foreground">Twin Cities Metro, MN</li>
+            <ul
+              className="mt-8 flex flex-wrap gap-2 text-xs font-semibold"
+              aria-label="Credentials and service area"
+            >
+              {content.hero.credential_chips.map((chip, index) => (
+                <li
+                  key={`${chip}-${index}`}
+                  className="rounded-sm border border-primary px-2.5 py-1 text-primary"
+                >
+                  {chip}
+                </li>
+              ))}
+              <li className="rounded-sm bg-secondary px-2.5 py-1 text-secondary-foreground">
+                {content.hero.location_chip}
+              </li>
             </ul>
           </div>
           <figure
             className="relative min-h-[28rem] overflow-hidden rounded-[2rem] border bg-primary shadow-xl lg:min-h-[38rem]"
             role="img"
-            aria-label="Photo placeholder: Joseph treating a patient at home or in a gym"
+            aria-label={content.hero.image_alt}
           >
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_20%,color-mix(in_oklab,var(--forge-gold)_45%,transparent),transparent_38%),linear-gradient(145deg,transparent_35%,color-mix(in_oklab,var(--forge-gold)_20%,transparent))]" />
           </figure>
@@ -684,18 +587,25 @@ export function HomeSections({
       <section id="approach" className={sectionClass} aria-labelledby="approach-title">
         <div className={cn(containerClass, "grid gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:gap-20")}>
           <SectionHeading
-            eyebrow="I. Approach"
-            title="Treatment built around you, not a clinic schedule."
+            eyebrow={content.approach.eyebrow}
+            title={content.approach.title}
             id="approach-title"
-            description="Every plan starts by identifying the root cause of your pain and dysfunction. From there, you get a specialized rehabilitation protocol designed to support sustainable lifestyle changes."
+            description={content.approach.description}
           />
           <div className="divide-y divide-border border-y border-border">
-            {principles.map((principle) => (
-              <article key={principle.title} className="grid grid-cols-[2.5rem_1fr] gap-5 py-7 sm:grid-cols-[3.5rem_1fr] sm:py-9">
-                <span className="font-serif text-2xl text-primary" aria-hidden="true">{principle.marker}</span>
+            {content.approach.principles.map((principle, index) => (
+              <article
+                key={`${principle.title}-${index}`}
+                className="grid grid-cols-[2.5rem_1fr] gap-5 py-7 sm:grid-cols-[3.5rem_1fr] sm:py-9"
+              >
+                <span className="font-serif text-2xl text-primary" aria-hidden="true">
+                  {principle.marker}
+                </span>
                 <div>
                   <h3 className="text-2xl font-semibold sm:text-3xl">{principle.title}</h3>
-                  <p className="mt-3 max-w-xl leading-7 text-muted-foreground">{principle.description}</p>
+                  <p className="mt-3 max-w-xl leading-7 text-muted-foreground">
+                    {principle.description}
+                  </p>
                 </div>
               </article>
             ))}
@@ -707,23 +617,30 @@ export function HomeSections({
               <span className="text-forge-gold" aria-hidden="true">·</span>
               <span>At your gym or on-field</span>
               <span className="text-forge-gold" aria-hidden="true">·</span>
-              <span className="text-muted-foreground">Serving the Twin Cities Metro Area</span>
+              <span className="text-muted-foreground">{content.approach.service_area}</span>
             </p>
           </div>
         </div>
       </section>
 
-      <section id="services" className={cn(sectionClass, "bg-primary text-primary-foreground")} aria-labelledby="services-title">
+      <section
+        id="services"
+        className={cn(sectionClass, "bg-primary text-primary-foreground")}
+        aria-labelledby="services-title"
+      >
         <div className={containerClass}>
           <SectionHeading
-            eyebrow="II. Services & conditions"
-            title="What I treat"
+            eyebrow={content.services.eyebrow}
+            title={content.services.title}
             id="services-title"
             eyebrowClassName="text-forge-gold"
           />
           <div className="mt-14 grid border-t border-primary-foreground/20 md:grid-cols-2">
-            {services.map((service) => (
-              <article key={service.number} className="grid grid-cols-[2.5rem_1fr] gap-4 border-b border-primary-foreground/20 py-7 md:px-7 md:odd:border-r lg:grid-cols-[3rem_1fr] lg:py-9">
+            {content.services.items.map((service, index) => (
+              <article
+                key={`${service.number}-${index}`}
+                className="grid grid-cols-[2.5rem_1fr] gap-4 border-b border-primary-foreground/20 py-7 md:px-7 md:odd:border-r lg:grid-cols-[3rem_1fr] lg:py-9"
+              >
                 <span className="font-serif text-xl text-forge-gold">{service.number}</span>
                 <div>
                   <h3 className="text-2xl font-semibold">{service.title}</h3>
@@ -736,28 +653,41 @@ export function HomeSections({
       </section>
 
       <section id="about" className={sectionClass} aria-labelledby="about-title">
-        <div className={cn(containerClass, "grid items-center gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-20")}>
+        <div
+          className={cn(
+            containerClass,
+            "grid items-center gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-20"
+          )}
+        >
           <figure
             className="min-h-[28rem] rounded-[2rem] border bg-[linear-gradient(145deg,var(--secondary),var(--accent))] shadow-sm lg:min-h-[40rem]"
             role="img"
-            aria-label="Portrait placeholder for Dr. Joseph Sperlak"
+            aria-label={content.about.portrait_alt}
           />
           <div>
-            <p className="mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary">III. About</p>
-            <div className="border-b border-border pb-6">
-              <h2 id="about-title" className="text-4xl font-semibold leading-none sm:text-6xl">Dr. Joseph Sperlak</h2>
-              <p className="mt-4 text-sm font-bold uppercase tracking-[0.16em] text-muted-foreground">PT, DPT, CSCS · Founder</p>
-            </div>
-            <p className="py-7 text-lg leading-8 text-muted-foreground">
-              Joseph is a Doctor of Physical Therapy and Certified Strength & Conditioning
-              Specialist. He trains and competes himself, so he understands what it takes to get
-              back to the work you care about.
+            <p className="mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary">
+              {content.about.eyebrow}
             </p>
+            <div className="border-b border-border pb-6">
+              <h2 id="about-title" className="text-4xl font-semibold leading-none sm:text-6xl">
+                {content.about.title || content.about.name}
+              </h2>
+              {content.about.title ? (
+                <p className="mt-4 font-serif text-2xl font-semibold">{content.about.name}</p>
+              ) : null}
+              <p className="mt-4 text-sm font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                {content.about.suffix} · {content.about.role}
+              </p>
+            </div>
+            <p className="py-7 text-lg leading-8 text-muted-foreground">{content.about.biography}</p>
             <dl className="divide-y divide-border border-y border-border">
-              {credentials.map(([credential, label]) => (
-                <div key={credential} className="flex items-start justify-between gap-6 py-4">
-                  <dt className="font-semibold">{credential}</dt>
-                  <dd className="shrink-0 text-sm text-muted-foreground">{label}</dd>
+              {content.about.credentials.map((item, index) => (
+                <div
+                  key={`${item.credential}-${index}`}
+                  className="flex items-start justify-between gap-6 py-4"
+                >
+                  <dt className="font-semibold">{item.credential}</dt>
+                  <dd className="shrink-0 text-sm text-muted-foreground">{item.label}</dd>
                 </div>
               ))}
             </dl>
@@ -765,26 +695,57 @@ export function HomeSections({
         </div>
       </section>
 
-      <section id="pricing" className={cn(sectionClass, "bg-secondary/55")} aria-labelledby="pricing-title">
+      <section
+        id="pricing"
+        className={cn(sectionClass, "bg-secondary/55")}
+        aria-labelledby="pricing-title"
+      >
         <div className={containerClass}>
           <div className="grid gap-8 lg:grid-cols-2 lg:items-end">
-            <SectionHeading eyebrow="IV. Getting started & pricing" title="Three steps to a plan" id="pricing-title" />
+            <SectionHeading
+              eyebrow={content.pricing.eyebrow}
+              title={content.pricing.title}
+              id="pricing-title"
+            />
             <p className="max-w-xl text-base leading-8 text-muted-foreground sm:text-lg">
-              Forge is a cash-based, out-of-network practice. Pricing is simple and shared up front.
+              {content.pricing.description}
             </p>
           </div>
           <div className="mt-14 grid gap-6 lg:grid-cols-3">
-            {pricing.map((item) => (
-              <Card key={item.step} className={cn("h-full", "featured" in item && item.featured ? "border-primary bg-primary text-primary-foreground shadow-lg" : "")}>
+            {content.pricing.items.map((item, index) => (
+              <Card
+                key={`${item.step}-${index}`}
+                className={cn(
+                  "h-full",
+                  item.featured ? "border-primary bg-primary text-primary-foreground shadow-lg" : ""
+                )}
+              >
                 <CardHeader>
-                  <p className={cn("text-xs font-bold uppercase tracking-[0.2em] text-primary", "featured" in item && item.featured ? "text-forge-gold" : "")}>{item.step}</p>
-                  <CardTitle><h3 className="mt-3 text-2xl leading-tight">{item.title}</h3></CardTitle>
+                  <p
+                    className={cn(
+                      "text-xs font-bold uppercase tracking-[0.2em] text-primary",
+                      item.featured ? "text-forge-gold" : ""
+                    )}
+                  >
+                    {item.step}
+                  </p>
+                  <CardTitle>
+                    <h3 className="mt-3 text-2xl leading-tight">{item.title}</h3>
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="flex-1">
                   <p className="font-serif text-5xl font-semibold">
-                    {item.price} {item.detail ? <small className="font-sans text-sm font-medium opacity-70">{item.detail}</small> : null}
+                    {item.price}{" "}
+                    {item.detail ? (
+                      <small className="font-sans text-sm font-medium opacity-70">{item.detail}</small>
+                    ) : null}
                   </p>
-                  <CardDescription className={cn("mt-5 text-base leading-7", "featured" in item && item.featured ? "text-primary-foreground/75" : "")}>
+                  <CardDescription
+                    className={cn(
+                      "mt-5 text-base leading-7",
+                      item.featured ? "text-primary-foreground/75" : ""
+                    )}
+                  >
                     {item.description}
                   </CardDescription>
                 </CardContent>
@@ -796,58 +757,90 @@ export function HomeSections({
 
       <section id="reviews" className={sectionClass} aria-labelledby="reviews-title">
         <div className={containerClass}>
-          <SectionHeading eyebrow="V. Patient stories" title="In their words" id="reviews-title" />
+          <SectionHeading
+            eyebrow={content.testimonials.eyebrow}
+            title={content.testimonials.title}
+            id="reviews-title"
+          />
           <div className="mt-14 grid gap-8 lg:grid-cols-3">
-            {testimonials.map((testimonial) => (
-              <figure key={testimonial.attribution} className="flex h-full flex-col border-t-2 border-primary pt-7">
-                <blockquote className="flex-1 font-serif text-2xl leading-9">“{testimonial.quote}”</blockquote>
-                <figcaption className="mt-7 text-sm text-muted-foreground">— {testimonial.attribution}</figcaption>
+            {content.testimonials.items.map((testimonial, index) => (
+              <figure
+                key={`${testimonial.attribution}-${index}`}
+                className="flex h-full flex-col border-t-2 border-primary pt-7"
+              >
+                <blockquote className="flex-1 font-serif text-2xl leading-9">
+                  “{testimonial.quote}”
+                </blockquote>
+                <figcaption className="mt-7 text-sm text-muted-foreground">
+                  — {testimonial.attribution}
+                </figcaption>
               </figure>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="resources" className={cn(sectionClass, "bg-card")} aria-labelledby="resources-title">
+      <section
+        id="resources"
+        className={cn(sectionClass, "bg-card")}
+        aria-labelledby="resources-title"
+      >
         <div className={containerClass}>
           <div className="flex flex-col justify-between gap-8 sm:flex-row sm:items-end">
-            <SectionHeading eyebrow="Latest resources" title="Notes from the training floor" id="resources-title" />
+            <SectionHeading
+              eyebrow={content.resources.eyebrow}
+              title={content.resources.title}
+              id="resources-title"
+              description={content.resources.description || undefined}
+            />
             <a href="/resources/" className={cn(buttonVariants({ variant: "ghost" }), "w-fit")}>
-              View all resources <ArrowRight className="size-4" aria-hidden="true" />
+              {content.resources.all_resources_label}{" "}
+              <ArrowRight className="size-4" aria-hidden="true" />
             </a>
           </div>
           {resourcesUnavailable ? (
             <Alert className="mt-12">
               <AlertTitle>Resources are temporarily unavailable</AlertTitle>
-              <AlertDescription>
-                Please visit the resources page again soon. The rest of the site is ready for you.
-              </AlertDescription>
+              <AlertDescription>{content.resources.unavailable_message}</AlertDescription>
             </Alert>
           ) : latestPosts.length === 0 ? (
             <div className="mt-12 rounded-xl border border-dashed p-8 text-muted-foreground">
-              <p>New articles are on the way. Visit the resources page again soon.</p>
+              <p>{content.resources.empty_message}</p>
             </div>
           ) : (
             <div className="mt-12 grid gap-6 lg:grid-cols-3">
               {latestPosts.map((post) => {
                 const formattedDate = formatPostDate(post.published_at)
+                const postHref = `/resources/${encodeURIComponent(post.slug)}`
                 return (
                   <Card key={post.id} className="h-full">
                     <CardHeader>
                       <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                        <span>{post.category || "Resource"}</span>
-                        {formattedDate ? <time dateTime={post.published_at || undefined}>{formattedDate}</time> : null}
+                        <span>{post.category || content.resources.category_fallback}</span>
+                        {formattedDate ? (
+                          <time dateTime={post.published_at || undefined}>{formattedDate}</time>
+                        ) : null}
                       </div>
                       <CardTitle>
                         <h3 className="mt-4 text-2xl leading-tight">
-                          <a className="rounded-sm hover:text-primary" href={`/resources/${encodeURIComponent(post.slug)}`}>{post.title || "Untitled resource"}</a>
+                          <a className="rounded-sm hover:text-primary" href={postHref}>
+                            {post.title || "Untitled resource"}
+                          </a>
                         </h3>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="flex-1">
-                      <CardDescription className="text-base leading-7">{post.excerpt || ""}</CardDescription>
+                      <CardDescription className="text-base leading-7">
+                        {post.excerpt || ""}
+                      </CardDescription>
                     </CardContent>
-                    <CardFooter className="text-sm text-muted-foreground">By {post.author_name || "Dr. Joseph Sperlak"}</CardFooter>
+                    <CardFooter className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+                      <span>By {post.author_name || content.about.name}</span>
+                      <a className="inline-flex items-center gap-1 font-semibold text-foreground" href={postHref}>
+                        {content.resources.read_article_label}
+                        <ArrowRight className="size-3.5" aria-hidden="true" />
+                      </a>
+                    </CardFooter>
                   </Card>
                 )
               })}
@@ -859,53 +852,109 @@ export function HomeSections({
       <section id="faq" className={sectionClass} aria-labelledby="faq-title">
         <div className={cn(containerClass, "grid gap-12 lg:grid-cols-[0.78fr_1.22fr] lg:gap-20")}>
           <div>
-            <SectionHeading eyebrow="VI. Questions" title="Common questions" id="faq-title" />
+            <SectionHeading
+              eyebrow={content.faq.eyebrow}
+              title={content.faq.title}
+              id="faq-title"
+            />
             <p className="mt-6 text-muted-foreground">
-              Don't see yours? <a className="font-semibold text-foreground underline decoration-forge-gold decoration-2 underline-offset-4" href="#contact">Ask during your free phone consult.</a>
+              {content.faq.cta_prefix}{" "}
+              <a
+                className="font-semibold text-foreground underline decoration-forge-gold decoration-2 underline-offset-4"
+                href="#contact"
+              >
+                {content.faq.cta_label}
+              </a>
             </p>
           </div>
           <div className="divide-y divide-border border-y border-border">
-            {faqs.map((faq, index) => (
-              <details key={faq.question} className="group py-6" open={index === 0}>
+            {content.faq.items.map((faq, index) => (
+              <details key={`${faq.question}-${index}`} className="group py-6" open={index === 0}>
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-6 rounded-sm font-serif text-xl font-semibold marker:hidden sm:text-2xl">
                   {faq.question}
-                  <span className="text-2xl font-normal text-primary transition-transform group-open:rotate-45" aria-hidden="true">+</span>
+                  <span
+                    className="text-2xl font-normal text-primary transition-transform group-open:rotate-45"
+                    aria-hidden="true"
+                  >
+                    +
+                  </span>
                 </summary>
-                <p className="max-w-2xl pt-4 leading-7 text-muted-foreground">{faq.answer}</p>
+                <p className="max-w-2xl whitespace-pre-wrap pt-4 leading-7 text-muted-foreground">
+                  {faq.answer}
+                </p>
               </details>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="contact" className={cn(sectionClass, "bg-secondary/55")} aria-labelledby="contact-title">
+      <section
+        id="contact"
+        className={cn(sectionClass, "bg-secondary/55")}
+        aria-labelledby="contact-title"
+      >
         <div className={cn(containerClass, "grid gap-12 lg:grid-cols-2 lg:gap-20")}>
           <div>
-            <p className="mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary">VII. Contact</p>
-            <h2 id="contact-title" className="text-4xl font-semibold leading-[1.05] sm:text-6xl">Book a free 15-minute phone consult.</h2>
+            <p className="mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary">
+              {content.contact.eyebrow}
+            </p>
+            <h2 id="contact-title" className="text-4xl font-semibold leading-[1.05] sm:text-6xl">
+              {content.contact.title}
+            </h2>
             <p className="mt-6 max-w-xl text-lg leading-8 text-muted-foreground">
-              Leave your details and Joseph will call you back to talk through your goals and next steps.
+              {content.contact.description}
             </p>
             <div className="mt-10 grid gap-6 border-t border-border pt-8 sm:grid-cols-2">
               <div className="flex gap-3">
                 <Phone className="mt-1 size-5 text-primary" aria-hidden="true" />
-                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Phone</p><a className="mt-1 block font-semibold" href="tel:+16125550148">(612) 555-0148</a></div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                    Phone
+                  </p>
+                  <a className="mt-1 block font-semibold" href={telephoneHref}>
+                    {content.contact.phone}
+                  </a>
+                </div>
               </div>
               <div className="flex gap-3">
                 <Mail className="mt-1 size-5 text-primary" aria-hidden="true" />
-                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Email</p><a className="mt-1 block break-all font-semibold" href="mailto:hello@forgeperformance.com">hello@forgeperformance.com</a></div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                    Email
+                  </p>
+                  <a
+                    className="mt-1 block break-all font-semibold"
+                    href={`mailto:${content.contact.email}`}
+                  >
+                    {content.contact.email}
+                  </a>
+                </div>
               </div>
               <div className="flex gap-3">
                 <MapPin className="mt-1 size-5 text-primary" aria-hidden="true" />
-                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Service area</p><p className="mt-1 font-semibold">Twin Cities Metro Area</p></div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                    Service area
+                  </p>
+                  <p className="mt-1 font-semibold">{content.contact.service_area}</p>
+                </div>
               </div>
               <div className="flex gap-3">
                 <MapPin className="mt-1 size-5 text-primary" aria-hidden="true" />
-                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Where</p><p className="mt-1 font-semibold">Your home or gym</p></div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                    Where
+                  </p>
+                  <p className="mt-1 font-semibold">{content.contact.venue}</p>
+                </div>
               </div>
             </div>
           </div>
-          <ConsultationForm apiUrl={apiUrl} turnstileSiteKey={turnstileSiteKey} />
+          <ConsultationForm
+            apiUrl={apiUrl}
+            turnstileSiteKey={turnstileSiteKey}
+            contact={content.contact}
+          />
         </div>
       </section>
     </>

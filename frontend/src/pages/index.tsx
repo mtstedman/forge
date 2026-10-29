@@ -4,10 +4,15 @@ import { HomeSections } from "@/components/home-sections"
 import { PublicLayout } from "@/components/public-layout"
 import { Seo } from "@/components/seo"
 import { getFrontendConfig } from "@/lib/config.server"
-import { getPosts } from "@/lib/server-api"
+import {
+  DEFAULT_MAIN_PAGE_CONTENT,
+  type MainPageContent,
+} from "@/lib/main-page-content"
+import { getMainPageContent, getPosts } from "@/lib/server-api"
 import type { PostSummary } from "@/lib/types"
 
 type HomePageProps = {
+  content: MainPageContent
   posts: PostSummary[]
   resourcesUnavailable: boolean
   siteUrl: string
@@ -15,24 +20,23 @@ type HomePageProps = {
   turnstileSiteKey: string
 }
 
-const title = "Forge Performance Therapy — Twin Cities"
-const description =
-  "One-on-one mobile physical therapy, rehabilitation and performance care with Dr. Joseph Sperlak, PT, DPT, CSCS across the Twin Cities."
-
 export const getServerSideProps: GetServerSideProps<HomePageProps> = async () => {
   const { publicConfig } = getFrontendConfig()
+  let content = DEFAULT_MAIN_PAGE_CONTENT
   let posts: PostSummary[] = []
   let resourcesUnavailable = false
 
-  try {
-    const response = await getPosts(1, 3)
-    posts = response.data.slice(0, 3)
-  } catch {
-    resourcesUnavailable = true
-  }
+  const [contentResult, postsResult] = await Promise.allSettled([
+    getMainPageContent(),
+    getPosts(1, 3),
+  ])
+  if (contentResult.status === "fulfilled") content = contentResult.value
+  if (postsResult.status === "fulfilled") posts = postsResult.value.data.slice(0, 3)
+  else resourcesUnavailable = true
 
   return {
     props: {
+      content,
       posts,
       resourcesUnavailable,
       siteUrl: publicConfig.siteUrl,
@@ -43,6 +47,7 @@ export const getServerSideProps: GetServerSideProps<HomePageProps> = async () =>
 }
 
 export default function HomePage({
+  content,
   posts,
   resourcesUnavailable,
   siteUrl,
@@ -58,18 +63,18 @@ export default function HomePage({
         "@id": `${siteUrl}/#organization`,
         name: "Forge Performance Therapy",
         url: canonical,
-        email: "hello@forgeperformance.com",
-        telephone: "+1-612-555-0148",
-        description:
-          "Mobile, one-on-one physical therapy and performance rehabilitation in the Twin Cities metro area.",
+        email: content.contact.email,
+        telephone: content.contact.phone,
+        description: content.seo.description,
         areaServed: {
           "@type": "AdministrativeArea",
-          name: "Twin Cities Metro Area, Minnesota",
+          name: content.contact.service_area,
         },
         founder: {
           "@type": "Person",
-          name: "Dr. Joseph Sperlak",
-          honorificSuffix: "PT, DPT, CSCS",
+          name: content.about.name,
+          honorificSuffix: content.about.suffix,
+          jobTitle: content.about.role,
         },
       },
       {
@@ -84,9 +89,15 @@ export default function HomePage({
 
   return (
     <>
-      <Seo title={title} description={description} canonical={canonical} jsonLd={jsonLd} />
+      <Seo
+        title={content.seo.title}
+        description={content.seo.description}
+        canonical={canonical}
+        jsonLd={jsonLd}
+      />
       <PublicLayout active="home">
         <HomeSections
+          content={content}
           posts={posts}
           resourcesUnavailable={resourcesUnavailable}
           apiUrl={apiUrl}

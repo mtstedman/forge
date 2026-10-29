@@ -6,11 +6,13 @@ namespace Forge\Api\Routes;
 
 use Forge\Api\Captcha\TurnstileVerifier;
 use Forge\Api\Config;
+use Forge\Api\Controller\MainPageContentController;
 use Forge\Api\Controller\PublicCommentController;
 use Forge\Api\Controller\PublicConsultationRequestController;
 use Forge\Api\Controller\PublicPostController;
 use Forge\Api\Repository\CommentRepository;
 use Forge\Api\Repository\ConsultationRequestRepository;
+use Forge\Api\Repository\MainPageContentRepository;
 use Forge\Api\Repository\MediaRepository;
 use Forge\Api\Repository\PostRepository;
 use PDO;
@@ -23,6 +25,7 @@ use Slim\Interfaces\RouteCollectorProxyInterface;
  * GET  /posts/{slug}            published post with approved comments
  * GET  /posts/{slug}/comments   approved comments, oldest first
  * POST /posts/{slug}/comments   protected submission, off by default
+ * GET  /main-page-content       editable main-page copy document (cacheable)
  */
 final class PublicRoutes
 {
@@ -42,6 +45,9 @@ final class PublicRoutes
             $captchaVerifier ?? new TurnstileVerifier($config),
         );
 
+        $mainPageContent = new MainPageContentController(new MainPageContentRepository($pdo));
+
+        $routes->get('/main-page-content', [$mainPageContent, 'show']);
         $routes->post('/consultation-requests', [$consultations, 'create']);
         $routes->get('/posts', [$posts, 'index']);
         $routes->get('/posts/{slug}', [$posts, 'show']);
