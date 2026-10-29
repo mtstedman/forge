@@ -58,6 +58,7 @@ export type AdminPost = {
   cover_media_id: number | null
   comments_enabled: boolean
   status: PostStatus
+  has_draft: boolean
   published_at: string | null
   updated_at: string | null
 }
@@ -66,6 +67,7 @@ export type PostFormValues = {
   id: number | null
   /** null while creating a post that has not been saved yet. */
   status: PostStatus | null
+  has_draft: boolean
   title: string
   slug: string
   excerpt: string
@@ -182,6 +184,7 @@ export function normalizeAdminPost(raw: unknown): AdminPost | null {
     cover_media_id: integerOrNull(row.cover_media_id),
     comments_enabled: row.comments_enabled === true || Number(row.comments_enabled) === 1,
     status: row.status === "published" ? "published" : "draft",
+    has_draft: row.has_draft === true || Number(row.has_draft) === 1,
     published_at: nullableString(row.published_at),
     updated_at: nullableString(row.updated_at),
   }
@@ -191,6 +194,7 @@ export function emptyPostForm(): PostFormValues {
   return {
     id: null,
     status: null,
+    has_draft: false,
     title: "",
     slug: "",
     excerpt: "",
@@ -213,6 +217,7 @@ export function postFormFromPost(post: AdminPost): PostFormValues {
   return {
     id: post.id,
     status: post.status,
+    has_draft: post.has_draft,
     title: post.title,
     slug: post.slug,
     excerpt: post.excerpt ?? "",
@@ -361,6 +366,7 @@ export function PostEditor({
   const disabled = busy !== null
   const isNew = form.id === null
   const isPublished = form.status === "published"
+  const hasPendingDraft = isPublished && form.has_draft
 
   const trimmedSlug = form.slug.trim()
   const liveSlugError =
@@ -386,7 +392,14 @@ export function PostEditor({
       >
         <div className="flex flex-col gap-4 border-b px-4 py-4 sm:px-6 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0 space-y-2">
-            <StatusBadge status={form.status} />
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={form.status} />
+              {hasPendingDraft ? (
+                <span className="inline-flex items-center rounded-full border border-amber-600/30 bg-amber-600/10 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                  Pending changes
+                </span>
+              ) : null}
+            </div>
             <h2
               id="post-editor-title"
               className="break-words font-serif text-2xl font-semibold leading-tight"
@@ -394,10 +407,15 @@ export function PostEditor({
               {heading}
             </h2>
             {!isNew ? (
-              <p className="text-xs text-muted-foreground">
-                Updated {formatDate(form.updated_at)}
-                {isPublished ? ` · Published ${formatDate(form.published_at)}` : null}
-              </p>
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p>
+                  {hasPendingDraft ? "Draft updated" : "Updated"} {formatDate(form.updated_at)}
+                  {isPublished ? ` · Published ${formatDate(form.published_at)}` : null}
+                </p>
+                {hasPendingDraft ? (
+                  <p>The saved draft is not live until you publish these changes.</p>
+                ) : null}
+              </div>
             ) : (
               <p className="text-xs text-muted-foreground">New posts are saved as drafts.</p>
             )}
@@ -425,13 +443,21 @@ export function PostEditor({
               )}
               Unpublish
             </Button>
-            <Button variant="secondary" onClick={onPublish} disabled={isPublished || disabled}>
+            <Button
+              variant="secondary"
+              onClick={onPublish}
+              disabled={(isPublished && !hasPendingDraft) || disabled}
+            >
               {busy === "publishing" ? (
                 <LoaderCircle className="animate-spin" aria-hidden="true" />
               ) : (
                 <Globe aria-hidden="true" />
               )}
-              {busy === "publishing" ? "Publishing…" : "Publish"}
+              {busy === "publishing"
+                ? "Publishing…"
+                : hasPendingDraft
+                  ? "Publish changes"
+                  : "Publish"}
             </Button>
             <Button type="submit" disabled={disabled}>
               {busy === "saving" ? (
@@ -439,7 +465,7 @@ export function PostEditor({
               ) : (
                 <Save aria-hidden="true" />
               )}
-              {busy === "saving" ? "Saving…" : isPublished ? "Save changes" : "Save draft"}
+              {busy === "saving" ? "Saving…" : "Save draft"}
             </Button>
           </div>
         </div>

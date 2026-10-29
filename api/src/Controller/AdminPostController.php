@@ -113,8 +113,16 @@ final class AdminPostController
 
     private function changePublicationStatus(ResponseInterface $response, int $id, bool $publish): ResponseInterface
     {
-        if ($this->posts->find($id) === null) {
+        $post = $this->posts->find($id);
+        if ($post === null) {
             return $this->notFound($response);
+        }
+
+        // Publishing (and unpublishing pending edits) moves the latest saved slug into the
+        // live row, so it must not collide with another post's live or reserved slug.
+        if (($publish || $post['has_draft'] === true)
+            && $this->slugExists((string) $post['slug'], $id)) {
+            return $this->validationError($response, ['slug' => 'This slug is already in use.']);
         }
 
         if ($publish) {
@@ -190,15 +198,10 @@ final class AdminPostController
         return $fields;
     }
 
+    /** Another post's live slug or pending-draft slug counts as taken. */
     private function slugExists(string $slug, ?int $currentId): bool
     {
-        foreach ($this->posts->listAll() as $post) {
-            if ($post['slug'] === $slug && $post['id'] !== $currentId) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->posts->slugInUse($slug, $currentId);
     }
 
     /** @param array<string, mixed> $input @return array<string, mixed> */

@@ -12,6 +12,7 @@ use Forge\Api\Database;
 use Forge\Api\Migrator;
 use Forge\Api\Repository\CommentRepository;
 use Forge\Api\Repository\ConsultationRequestRepository;
+use Forge\Api\Repository\MediaRepository;
 use Forge\Api\Repository\PostRepository;
 use OpenSSLAsymmetricKey;
 use PDO;
@@ -109,6 +110,242 @@ final class AdminApiTest extends TestCase
         $deleted = $this->request('DELETE', '/admin/posts/' . $id);
         self::assertSame(204, $deleted->getStatusCode());
         self::assertNull((new PostRepository($this->pdo))->find($id));
+    }
+
+    public function testPublishedPostEditsStayPendingUntilPublishedThenReplaceTheLiveVersion(): void
+    {
+        $media = new MediaRepository($this->pdo);
+        $liveCover = $media->create($this->mediaData('live-cover.webp'));
+        $draftCover = $media->create($this->mediaData('draft-cover.webp'));
+        $commentsApp = $this->publicCommentsApp();
+
+        $created = $this->decode($this->request('POST', '/admin/posts', [
+            'slug' => 'live-guide',
+            'title' => 'Live guide',
+            'excerpt' => 'Live excerpt',
+            'body_markdown' => '# Live body',
+            'categories' => ['Rehab'],
+            'tags' => ['knee'],
+            'faq' => [['question' => 'Live question?', 'answer' => 'Live answer.']],
+            'meta_title' => 'Live meta title',
+            'meta_description' => 'Live meta description',
+            'cover_media_id' => $liveCover,
+            'author_name' => 'Dr. Live',
+            'comments_enabled' => true,
+        ]))['data'];
+        self::assertFalse($created['has_draft']);
+        $id = $created['id'];
+
+        $published = $this->decode($this->request('POST', '/admin/posts/' . $id . '/publish'))['data'];
+        self::assertSame('published', $published['status']);
+        self::assertFalse($published['has_draft']);
+        $publishedAt = $published['published_at'];
+        self::assertNotNull($publishedAt);
+
+        $livePublic = $this->decode($this->request('GET', '/posts/live-guide'))['data'];
+        $livePublicList = $this->decode($this->request('GET', '/posts'))['data'];
+        $liveRow = $this->pdo->query('SELECT * FROM posts WHERE id = ' . (int) $id)->fetch();
+
+        $saved = $this->request('PUT', '/admin/posts/' . $id, [
+            'slug' => 'new-guide',
+            'title' => 'New guide',
+            'excerpt' => 'New excerpt',
+            'body_markdown' => '**New body**',
+            'categories' => ['Strength', 'Mobility'],
+            'tags' => ['hip'],
+            'faq' => [['question' => 'New question?', 'answer' => 'New answer.']],
+            'meta_title' => 'New meta title',
+            'meta_description' => 'New meta description',
+            'cover_media_id' => $draftCover,
+            'author_name' => 'Dr. Draft',
+            'comments_enabled' => false,
+        ]);
+        self::assertSame(200, $saved->getStatusCode());
+        $draft = $this->decode($saved)['data'];
+        self::assertSame($id, $draft['id']);
+        self::assertSame('published', $draft['status']);
+        self::assertTrue($draft['has_draft']);
+        self::assertSame($publishedAt, $draft['published_at']);
+        self::assertSame('new-guide', $draft['slug']);
+        self::assertSame('New guide', $draft['title']);
+        self::assertSame('New excerpt', $draft['excerpt']);
+        self::assertSame('**New body**', $draft['body_markdown']);
+        self::assertStringContainsString('<strong>New body</strong>', $draft['body_html']);
+        self::assertSame(['Strength', 'Mobility'], $draft['categories']);
+        self::assertSame('Strength', $draft['category']);
+        self::assertSame(['hip'], $draft['tags']);
+        self::assertSame([['question' => 'New question?', 'answer' => 'New answer.']], $draft['faq']);
+        self::assertSame('New meta title', $draft['meta_title']);
+        self::assertSame('New meta description', $draft['meta_description']);
+        self::assertSame($draftCover, $draft['cover_media_id']);
+        self::assertSame('Dr. Draft', $draft['author_name']);
+        self::assertSame(0, $draft['comments_enabled']);
+
+        // The live row, slug, publication state, and timestamps are untouched.
+        self::assertSame($liveRow, $this->pdo->query('SELECT * FROM posts WHERE id = ' . (int) $id)->fetch());
+        self::assertSame($draft, $this->decode($this->request('GET', '/admin/posts/' . $id))['data']);
+        $listed = array_column($this->decode($this->request('GET', '/admin/posts'))['data'], null, 'id');
+        self::assertSame($draft, $listed[$id]);
+        self::assertSame([$id], array_column($this->decode($this->request('GET', '/admin/posts?status=published'))['data'], 'id'));
+
+        // Public readers keep seeing the live version and no draft metadata.
+        self::assertSame($livePublic, $this->decode($this->request('GET', '/posts/live-guide'))['data']);
+        self::assertSame($livePublicList, $this->decode($this->request('GET', '/posts'))['data']);
+        self::assertArrayNotHasKey('has_draft', $livePublic);
+        self::assertArrayNotHasKey('has_draft', $livePublicList[0]);
+        self::assertSame(404, $this->request('GET', '/posts/new-guide')->getStatusCode());
+        self::assertSame(200, $this->request('GET', '/posts/live-guide/comments')->getStatusCode());
+        self::assertSame(404, $this->request('GET', '/posts/new-guide/comments')->getStatusCode());
+        self::assertSame(202, $this->postPublicComment($commentsApp, 'live-guide')->getStatusCode());
+        self::assertSame(404, $this->postPublicComment($commentsApp, 'new-guide')->getStatusCode());
+
+        // A repeated partial save merges with the latest saved draft.
+        $resaved = $this->decode($this->request('PUT', '/admin/posts/' . $id, ['title' => 'Second draft title']))['data'];
+        self::assertSame('Second draft title', $resaved['title']);
+        self::assertSame('new-guide', $resaved['slug']);
+        self::assertSame(['hip'], $resaved['tags']);
+        self::assertSame($draftCover, $resaved['cover_media_id']);
+        self::assertTrue($resaved['has_draft']);
+        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+
+        // A failed validation keeps the saved edits.
+        $invalid = $this->request('PUT', '/admin/posts/' . $id, ['title' => '', 'tags' => ['lost']]);
+        self::assertSame(422, $invalid->getStatusCode());
+        self::assertSame('Validation failed.', $this->decode($invalid)['error']);
+        self::assertSame($resaved, $this->decode($this->request('GET', '/admin/posts/' . $id))['data']);
+        self::assertSame($livePublic, $this->decode($this->request('GET', '/posts/live-guide'))['data']);
+
+        $promoted = $this->request('POST', '/admin/posts/' . $id . '/publish');
+        self::assertSame(200, $promoted->getStatusCode());
+        $promotedPost = $this->decode($promoted)['data'];
+        self::assertSame('published', $promotedPost['status']);
+        self::assertFalse($promotedPost['has_draft']);
+        self::assertSame($publishedAt, $promotedPost['published_at']);
+        self::assertSame('new-guide', $promotedPost['slug']);
+        self::assertSame('Second draft title', $promotedPost['title']);
+        self::assertStringContainsString('<strong>New body</strong>', $promotedPost['body_html']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+
+        // Public readers now get the promoted version under the new slug only.
+        self::assertSame(404, $this->request('GET', '/posts/live-guide')->getStatusCode());
+        self::assertSame(404, $this->request('GET', '/posts/live-guide/comments')->getStatusCode());
+        self::assertSame(404, $this->postPublicComment($commentsApp, 'live-guide')->getStatusCode());
+        $publicResponse = $commentsApp->handle((new ServerRequestFactory())->createServerRequest('GET', '/posts/new-guide'));
+        self::assertSame(200, $publicResponse->getStatusCode());
+        $public = $this->decode($publicResponse)['data'] ?? null;
+        self::assertIsArray($public);
+        self::assertArrayNotHasKey('has_draft', $public);
+        self::assertSame($id, $public['id']);
+        self::assertSame('Second draft title', $public['title']);
+        self::assertSame('New excerpt', $public['excerpt']);
+        self::assertSame('Strength', $public['category']);
+        self::assertSame(['hip'], $public['tags']);
+        self::assertStringContainsString('draft-cover.webp', $public['cover']['url']);
+        self::assertSame('Dr. Draft', $public['author_name']);
+        self::assertSame($publishedAt, $public['published_at']);
+        self::assertStringContainsString('<strong>New body</strong>', $public['body_html']);
+        self::assertSame([['question' => 'New question?', 'answer' => 'New answer.']], $public['faq']);
+        self::assertSame('New meta title', $public['meta_title']);
+        self::assertSame('New meta description', $public['meta_description']);
+        self::assertFalse($public['comments_enabled']);
+        self::assertSame(200, $this->request('GET', '/posts/new-guide/comments')->getStatusCode());
+        self::assertSame(403, $this->postPublicComment($commentsApp, 'new-guide')->getStatusCode());
+        self::assertSame('new-guide', $this->decode($this->request('GET', '/posts'))['data'][0]['slug']);
+        // The stable post id keeps its comments.
+        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM comments WHERE post_id = ' . (int) $id)->fetchColumn());
+
+        // Publishing again without pending edits keeps the existing behavior.
+        $republished = $this->decode($this->request('POST', '/admin/posts/' . $id . '/publish'))['data'];
+        self::assertSame($publishedAt, $republished['published_at']);
+        self::assertFalse($republished['has_draft']);
+        self::assertSame('Second draft title', $republished['title']);
+    }
+
+    public function testPendingDraftSlugsAreReservedAndConflictingPromotionIsRejected(): void
+    {
+        $alpha = $this->decode($this->request('POST', '/admin/posts', ['slug' => 'alpha', 'title' => 'Alpha']))['data']['id'];
+        self::assertSame(200, $this->request('POST', '/admin/posts/' . $alpha . '/publish')->getStatusCode());
+        self::assertSame(200, $this->request('PUT', '/admin/posts/' . $alpha, ['slug' => 'alpha-renamed'])->getStatusCode());
+
+        foreach (['alpha', 'alpha-renamed'] as $taken) {
+            $create = $this->request('POST', '/admin/posts', ['slug' => $taken, 'title' => 'Other']);
+            self::assertSame(422, $create->getStatusCode(), $taken);
+            self::assertSame(['error' => 'Validation failed.', 'fields' => ['slug' => 'This slug is already in use.']], $this->decode($create));
+        }
+        $beta = $this->decode($this->request('POST', '/admin/posts', ['slug' => 'beta', 'title' => 'Beta']))['data']['id'];
+        foreach (['alpha', 'alpha-renamed'] as $taken) {
+            $update = $this->request('PUT', '/admin/posts/' . $beta, ['slug' => $taken]);
+            self::assertSame(422, $update->getStatusCode(), $taken);
+            self::assertArrayHasKey('slug', $this->decode($update)['fields']);
+        }
+        self::assertSame('beta', $this->decode($this->request('GET', '/admin/posts/' . $beta))['data']['slug']);
+
+        // The same post may keep its live slug or its own pending slug.
+        self::assertSame('alpha', $this->decode($this->request('PUT', '/admin/posts/' . $alpha, ['slug' => 'alpha']))['data']['slug']);
+        self::assertSame('alpha-renamed', $this->decode($this->request('PUT', '/admin/posts/' . $alpha, ['slug' => 'alpha-renamed']))['data']['slug']);
+
+        // A conflict that bypassed validation blocks promotion with a field error.
+        (new PostRepository($this->pdo))->update($beta, ['slug' => 'alpha-renamed']);
+        $rejected = $this->request('POST', '/admin/posts/' . $alpha . '/publish');
+        self::assertSame(422, $rejected->getStatusCode());
+        self::assertSame(['error' => 'Validation failed.', 'fields' => ['slug' => 'This slug is already in use.']], $this->decode($rejected));
+        $pending = $this->decode($this->request('GET', '/admin/posts/' . $alpha))['data'];
+        self::assertTrue($pending['has_draft']);
+        self::assertSame('alpha-renamed', $pending['slug']);
+        self::assertSame(200, $this->request('GET', '/posts/alpha')->getStatusCode());
+
+        (new PostRepository($this->pdo))->update($beta, ['slug' => 'beta']);
+        $promoted = $this->decode($this->request('POST', '/admin/posts/' . $alpha . '/publish'))['data'];
+        self::assertSame('alpha-renamed', $promoted['slug']);
+        self::assertFalse($promoted['has_draft']);
+        self::assertSame(404, $this->request('GET', '/posts/alpha')->getStatusCode());
+        self::assertSame(200, $this->request('GET', '/posts/alpha-renamed')->getStatusCode());
+
+        // The replaced live slug is free again.
+        self::assertSame('alpha', $this->decode($this->request('PUT', '/admin/posts/' . $beta, ['slug' => 'alpha']))['data']['slug']);
+    }
+
+    public function testUnpublishAndDeleteHandlePendingEdits(): void
+    {
+        $id = $this->decode($this->request('POST', '/admin/posts', ['slug' => 'pending-post', 'title' => 'Live title']))['data']['id'];
+        $publishedAt = $this->decode($this->request('POST', '/admin/posts/' . $id . '/publish'))['data']['published_at'];
+        $this->request('PUT', '/admin/posts/' . $id, ['title' => 'Pending title', 'slug' => 'pending-renamed']);
+
+        $unpublished = $this->request('POST', '/admin/posts/' . $id . '/unpublish');
+        self::assertSame(200, $unpublished->getStatusCode());
+        $post = $this->decode($unpublished)['data'];
+        self::assertSame('draft', $post['status']);
+        self::assertFalse($post['has_draft']);
+        self::assertSame('Pending title', $post['title']);
+        self::assertSame('pending-renamed', $post['slug']);
+        self::assertSame($publishedAt, $post['published_at']);
+        self::assertSame($post, $this->decode($this->request('GET', '/admin/posts/' . $id))['data']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+        self::assertSame(404, $this->request('GET', '/posts/pending-post')->getStatusCode());
+        self::assertSame(404, $this->request('GET', '/posts/pending-renamed')->getStatusCode());
+
+        // Now an ordinary unpublished draft: edits apply directly.
+        $edited = $this->decode($this->request('PUT', '/admin/posts/' . $id, ['title' => 'Edited draft']))['data'];
+        self::assertSame('draft', $edited['status']);
+        self::assertFalse($edited['has_draft']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+        $republished = $this->decode($this->request('POST', '/admin/posts/' . $id . '/publish'))['data'];
+        self::assertSame('Edited draft', $republished['title']);
+        self::assertSame($publishedAt, $republished['published_at']);
+        self::assertSame('Edited draft', $this->decode($this->request('GET', '/posts/pending-renamed'))['data']['title']);
+
+        // Delete with pending edits removes the pending draft; delete without works too.
+        $this->request('PUT', '/admin/posts/' . $id, ['title' => 'Doomed edit']);
+        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+        self::assertSame(204, $this->request('DELETE', '/admin/posts/' . $id)->getStatusCode());
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+        self::assertSame(404, $this->request('GET', '/admin/posts/' . $id)->getStatusCode());
+        self::assertSame(404, $this->request('GET', '/posts/pending-renamed')->getStatusCode());
+
+        $plain = $this->decode($this->request('POST', '/admin/posts', ['slug' => 'plain-post', 'title' => 'Plain']))['data']['id'];
+        $this->request('POST', '/admin/posts/' . $plain . '/publish');
+        self::assertSame(204, $this->request('DELETE', '/admin/posts/' . $plain)->getStatusCode());
+        self::assertNull((new PostRepository($this->pdo))->find($plain));
     }
 
     public function testPostSlugValidationAndUniquenessReturnFieldErrors(): void
@@ -608,6 +845,43 @@ final class AdminApiTest extends TestCase
             'consent' => true,
             'captcha_token' => 'accepted-token',
         ], $overrides);
+    }
+
+    /** @return array<string, mixed> */
+    private function mediaData(string $filename): array
+    {
+        return [
+            'filename' => $filename,
+            'original_name' => $filename,
+            'mime_type' => 'image/webp',
+            'size_bytes' => 100,
+            'width' => 10,
+            'height' => 10,
+            'alt_text' => 'Cover',
+        ];
+    }
+
+    private function publicCommentsApp(): App
+    {
+        return AppFactory::create($this->pdo, Config::fromArray([
+            'PUBLIC_COMMENTS_ENABLED' => 'true',
+            'APP_KEY' => 'admin-api-test-app-key-0123456789',
+        ]));
+    }
+
+    private function postPublicComment(App $app, string $slug): ResponseInterface
+    {
+        $request = (new ServerRequestFactory())
+            ->createServerRequest('POST', '/posts/' . $slug . '/comments', ['REMOTE_ADDR' => '192.0.2.44'])
+            ->withHeader('Content-Type', 'application/json')
+            ->withBody((new StreamFactory())->createStream(json_encode([
+                'author_name' => 'Reader',
+                'author_email' => 'reader@example.test',
+                'body' => 'Helpful article, thank you.',
+                'website' => '',
+            ], JSON_THROW_ON_ERROR)));
+
+        return $app->handle($request);
     }
 
     /** @return array<string, mixed> */

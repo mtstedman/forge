@@ -47,6 +47,30 @@ CREATE TABLE IF NOT EXISTS comments (
     moderated_at TEXT
 );
 
+-- Pending edits to a published post. The posts row stays the live record that public
+-- readers see; at most one pending draft per post holds the latest saved editable
+-- values until it is published (promoted into posts) or unpublished. Deleting the post
+-- removes its pending draft.
+CREATE TABLE IF NOT EXISTS post_drafts (
+    post_id INTEGER PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    excerpt TEXT NOT NULL DEFAULT '',
+    body_markdown TEXT NOT NULL DEFAULT '',
+    body_html TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    categories TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(categories) AND json_type(categories) = 'array'),
+    tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags) AND json_type(tags) = 'array'),
+    faq TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(faq) AND json_type(faq) = 'array'),
+    meta_title TEXT,
+    meta_description TEXT,
+    cover_media_id INTEGER REFERENCES media(id) ON DELETE SET NULL,
+    author_name TEXT NOT NULL DEFAULT '',
+    comments_enabled INTEGER NOT NULL DEFAULT 0 CHECK (comments_enabled IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 -- Reusable admin vocabulary. Entries are additive: they persist with post saves
 -- and stay available after a post deselects them or is deleted.
 CREATE TABLE IF NOT EXISTS taxonomy_terms (

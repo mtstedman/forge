@@ -12,6 +12,16 @@ use Throwable;
 
 final class PostRepository
 {
+    /**
+     * Editable columns (plus server-generated body_html) that a pending draft of a
+     * published post stores separately from the live posts row.
+     */
+    private const DRAFT_COLUMNS = [
+        'slug', 'title', 'excerpt', 'body_markdown', 'body_html', 'category', 'categories', 'tags', 'faq',
+        'meta_title', 'meta_description', 'cover_media_id', 'author_name', 'comments_enabled',
+    ];
+    private const DRAFT_PREFIX = 'draft__';
+
     public function __construct(private readonly PDO $pdo)
     {
     }
@@ -47,29 +57,61 @@ final class PostRepository
         return $this->hydrateOne($statement->fetch());
     }
 
-    /** @return array<int, array<string, mixed>> */
+    /**
+     * Admin listing. A published post with pending edits is returned with its latest
+     * saved draft values overlaid on the live row (`has_draft` true); the status filter
+     * applies to the live publication state.
+     *
+     * @return array<int, array<string, mixed>>
+     */
     public function listAll(?string $status = null): array
     {
         if ($status === null) {
-            $statement = $this->pdo->query('SELECT * FROM posts ORDER BY created_at DESC, id DESC');
+            $statement = $this->pdo->query(self::adminSelect() . ' ORDER BY p.created_at DESC, p.id DESC');
         } else {
             $statement = $this->pdo->prepare(
-                'SELECT * FROM posts WHERE status = :status ORDER BY created_at DESC, id DESC'
+                self::adminSelect() . ' WHERE p.status = :status ORDER BY p.created_at DESC, p.id DESC'
             );
             $statement->execute(['status' => $status]);
         }
 
-        return $this->hydrateMany($statement->fetchAll());
+        return array_map(fn (array $row): array => $this->hydrateAdmin($row), $statement->fetchAll());
     }
 
-    /** @return array<string, mixed>|null */
+    /**
+     * Admin read of one post, with any pending draft overlaid (see listAll()).
+     *
+     * @return array<string, mixed>|null
+     */
     public function find(int $id): ?array
     {
-        $statement = $this->pdo->prepare('SELECT * FROM posts WHERE id = :id LIMIT 1');
+        $statement = $this->pdo->prepare(self::adminSelect() . ' WHERE p.id = :id LIMIT 1');
         $statement->bindValue(':id', $id, PDO::PARAM_INT);
         $statement->execute();
+        $row = $statement->fetch();
 
-        return $this->hydrateOne($statement->fetch());
+        return is_array($row) ? $this->hydrateAdmin($row) : null;
+    }
+
+    /**
+     * Whether a post other than $exceptId uses the slug, either live or reserved by its
+     * pending draft.
+     */
+    public function slugInUse(string $slug, ?int $exceptId = null): bool
+    {
+        $statement = $this->pdo->prepare(<<<'SQL'
+            SELECT 1 FROM posts WHERE slug = :live_slug AND id <> :live_id
+            UNION ALL
+            SELECT 1 FROM post_drafts WHERE slug = :draft_slug AND post_id <> :draft_id
+            LIMIT 1
+            SQL);
+        $statement->bindValue(':live_slug', $slug);
+        $statement->bindValue(':live_id', $exceptId ?? 0, PDO::PARAM_INT);
+        $statement->bindValue(':draft_slug', $slug);
+        $statement->bindValue(':draft_id', $exceptId ?? 0, PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchColumn() !== false;
     }
 
     /**
@@ -131,6 +173,10 @@ final class PostRepository
     /**
      * Omitted `categories`/`category` and `tags` keep the current selections.
      *
+     * Unpublished posts are edited in place. For a published post the live row is left
+     * untouched: the edits are merged with the latest saved values (any existing pending
+     * draft) and stored as its single pending draft until publish() promotes it.
+     *
      * @param array<string, mixed> $data
      */
     public function update(int $id, array $data): void
@@ -144,6 +190,12 @@ final class PostRepository
         $tags = array_key_exists('tags', $data) ? self::normalizeTerms($data['tags']) : $current['tags'];
         $post = array_replace($current, $data);
         $bodyMarkdown = (string) ($post['body_markdown'] ?? '');
+
+        if ($current['status'] === 'published') {
+            $this->saveDraft($id, $post, $categories, $category, $tags, $bodyMarkdown);
+
+            return;
+        }
 
         $this->transactional(function () use ($id, $post, $categories, $category, $tags, $bodyMarkdown): void {
             $statement = $this->pdo->prepare(<<<'SQL'
@@ -211,6 +263,7 @@ final class PostRepository
         return $taxonomy;
     }
 
+    /** Deleting the post also removes its pending draft (ON DELETE CASCADE). */
     public function delete(int $id): void
     {
         $statement = $this->pdo->prepare('DELETE FROM posts WHERE id = :id');
@@ -218,30 +271,181 @@ final class PostRepository
         $statement->execute();
     }
 
+    /**
+     * Publishes the post, atomically promoting any pending draft into the live row and
+     * clearing it. The first publication timestamp is preserved. On failure (for example
+     * a slug conflict) both the live row and the pending draft are left unchanged.
+     */
     public function publish(int $id): void
     {
-        $statement = $this->pdo->prepare(<<<'SQL'
-            UPDATE posts
-            SET status = 'published',
-                published_at = COALESCE(published_at, :published_at),
-                updated_at = :updated_at
-            WHERE id = :id
-            SQL);
-        $now = self::now();
-        $statement->bindValue(':published_at', $now);
-        $statement->bindValue(':updated_at', $now);
-        $statement->bindValue(':id', $id, PDO::PARAM_INT);
-        $statement->execute();
+        $this->transactional(function () use ($id): void {
+            $this->promoteDraft($id);
+
+            $statement = $this->pdo->prepare(<<<'SQL'
+                UPDATE posts
+                SET status = 'published',
+                    published_at = COALESCE(published_at, :published_at),
+                    updated_at = :updated_at
+                WHERE id = :id
+                SQL);
+            $now = self::now();
+            $statement->bindValue(':published_at', $now);
+            $statement->bindValue(':updated_at', $now);
+            $statement->bindValue(':id', $id, PDO::PARAM_INT);
+            $statement->execute();
+        });
     }
 
+    /**
+     * Removes the post from public view. Pending edits become the ordinary unpublished
+     * draft (the live row takes the latest saved values) and the pending draft is cleared.
+     */
     public function unpublish(int $id): void
     {
-        $statement = $this->pdo->prepare(
-            "UPDATE posts SET status = 'draft', updated_at = :updated_at WHERE id = :id"
-        );
-        $statement->bindValue(':updated_at', self::now());
-        $statement->bindValue(':id', $id, PDO::PARAM_INT);
-        $statement->execute();
+        $this->transactional(function () use ($id): void {
+            $this->promoteDraft($id);
+
+            $statement = $this->pdo->prepare(
+                "UPDATE posts SET status = 'draft', updated_at = :updated_at WHERE id = :id"
+            );
+            $statement->bindValue(':updated_at', self::now());
+            $statement->bindValue(':id', $id, PDO::PARAM_INT);
+            $statement->execute();
+        });
+    }
+
+    /**
+     * Stores the merged editable values as the post's single pending draft, replacing
+     * any previous one. The live posts row is not modified.
+     *
+     * @param array<string, mixed> $post
+     * @param list<string> $categories
+     * @param array<mixed> $tags
+     */
+    private function saveDraft(int $id, array $post, array $categories, string $category, array $tags, string $bodyMarkdown): void
+    {
+        $this->transactional(function () use ($id, $post, $categories, $category, $tags, $bodyMarkdown): void {
+            $statement = $this->pdo->prepare(<<<'SQL'
+                INSERT INTO post_drafts (
+                    post_id, slug, title, excerpt, body_markdown, body_html, category, categories, tags, faq,
+                    meta_title, meta_description, cover_media_id, author_name, comments_enabled,
+                    created_at, updated_at
+                ) VALUES (
+                    :post_id, :slug, :title, :excerpt, :body_markdown, :body_html, :category, :categories, :tags, :faq,
+                    :meta_title, :meta_description, :cover_media_id, :author_name, :comments_enabled,
+                    :created_at, :updated_at
+                )
+                ON CONFLICT (post_id) DO UPDATE SET
+                    slug = excluded.slug,
+                    title = excluded.title,
+                    excerpt = excluded.excerpt,
+                    body_markdown = excluded.body_markdown,
+                    body_html = excluded.body_html,
+                    category = excluded.category,
+                    categories = excluded.categories,
+                    tags = excluded.tags,
+                    faq = excluded.faq,
+                    meta_title = excluded.meta_title,
+                    meta_description = excluded.meta_description,
+                    cover_media_id = excluded.cover_media_id,
+                    author_name = excluded.author_name,
+                    comments_enabled = excluded.comments_enabled,
+                    updated_at = excluded.updated_at
+                SQL);
+            $now = self::now();
+            $statement->execute([
+                'post_id' => $id,
+                'slug' => (string) $post['slug'],
+                'title' => (string) $post['title'],
+                'excerpt' => (string) $post['excerpt'],
+                'body_markdown' => $bodyMarkdown,
+                'body_html' => Markdown::toHtml($bodyMarkdown),
+                'category' => $category,
+                'categories' => self::encodeArray($categories),
+                'tags' => self::encodeArray($tags),
+                'faq' => self::encodeArray($post['faq'] ?? []),
+                'meta_title' => $post['meta_title'] ?? null,
+                'meta_description' => $post['meta_description'] ?? null,
+                'cover_media_id' => $post['cover_media_id'] ?? null,
+                'author_name' => (string) $post['author_name'],
+                'comments_enabled' => (int) $post['comments_enabled'],
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            $this->rememberTerms('category', $categories);
+            $this->rememberTerms('tag', $tags);
+        });
+    }
+
+    /**
+     * Copies a pending draft's editable values and generated HTML into the live row and
+     * deletes the draft. No-op without a pending draft. Callers own the transaction.
+     */
+    private function promoteDraft(int $id): void
+    {
+        $select = $this->pdo->prepare('SELECT * FROM post_drafts WHERE post_id = :id LIMIT 1');
+        $select->bindValue(':id', $id, PDO::PARAM_INT);
+        $select->execute();
+        $draft = $select->fetch();
+        if (!is_array($draft)) {
+            return;
+        }
+
+        $assignments = implode(', ', array_map(
+            static fn (string $column): string => $column . ' = :' . $column,
+            self::DRAFT_COLUMNS,
+        ));
+        $update = $this->pdo->prepare('UPDATE posts SET ' . $assignments . ' WHERE id = :id');
+        foreach (self::DRAFT_COLUMNS as $column) {
+            $value = $draft[$column];
+            $update->bindValue(':' . $column, $value, match (true) {
+                $value === null => PDO::PARAM_NULL,
+                is_int($value) => PDO::PARAM_INT,
+                default => PDO::PARAM_STR,
+            });
+        }
+        $update->bindValue(':id', $id, PDO::PARAM_INT);
+        $update->execute();
+
+        $delete = $this->pdo->prepare('DELETE FROM post_drafts WHERE post_id = :id');
+        $delete->bindValue(':id', $id, PDO::PARAM_INT);
+        $delete->execute();
+    }
+
+    /** Live posts columns plus the pending draft's columns under DRAFT_PREFIX aliases. */
+    private static function adminSelect(): string
+    {
+        $columns = ['p.*', 'd.post_id AS ' . self::DRAFT_PREFIX . 'post_id'];
+        foreach ([...self::DRAFT_COLUMNS, 'updated_at'] as $column) {
+            $columns[] = 'd.' . $column . ' AS ' . self::DRAFT_PREFIX . $column;
+        }
+
+        return 'SELECT ' . implode(', ', $columns) . ' FROM posts p LEFT JOIN post_drafts d ON d.post_id = p.id';
+    }
+
+    /**
+     * Overlays a joined pending draft on the live row; live id, status, published_at and
+     * created_at are kept, and updated_at is the draft's.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function hydrateAdmin(array $row): array
+    {
+        $hasDraft = $row[self::DRAFT_PREFIX . 'post_id'] !== null;
+        unset($row[self::DRAFT_PREFIX . 'post_id']);
+        foreach ([...self::DRAFT_COLUMNS, 'updated_at'] as $column) {
+            if ($hasDraft) {
+                $row[$column] = $row[self::DRAFT_PREFIX . $column];
+            }
+            unset($row[self::DRAFT_PREFIX . $column]);
+        }
+
+        $post = $this->hydrate($row);
+        $post['has_draft'] = $hasDraft;
+
+        return $post;
     }
 
     /**

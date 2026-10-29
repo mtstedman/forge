@@ -59,6 +59,155 @@ final class RepositoryTest extends TestCase
         self::assertNull($this->posts->findPublishedBySlug('draft-post'));
     }
 
+    public function testPublishedPostEditsArePendingUntilPromotedAtomically(): void
+    {
+        $media = new MediaRepository($this->pdo);
+        $liveCover = $media->create($this->mediaData('live.webp'));
+        $draftCover = $media->create($this->mediaData('draft.webp'));
+        $data = $this->postData('live-slug');
+        $data['cover_media_id'] = $liveCover;
+        $data['meta_title'] = 'Live meta';
+        $data['comments_enabled'] = 1;
+        $id = $this->posts->create($data);
+        $this->posts->publish($id);
+        $live = $this->posts->findPublishedBySlug('live-slug');
+        self::assertNotNull($live);
+        self::assertFalse($this->posts->find($id)['has_draft']);
+        $liveRow = $this->liveRow($id);
+
+        $this->posts->update($id, [
+            'slug' => 'draft-slug',
+            'title' => 'Draft title',
+            'excerpt' => 'Draft excerpt',
+            'body_markdown' => '**Draft body**',
+            'categories' => ['Mobility', 'Strength'],
+            'tags' => ['hip'],
+            'faq' => [['question' => 'Q?', 'answer' => 'A.']],
+            'meta_title' => 'Draft meta',
+            'meta_description' => 'Draft description',
+            'cover_media_id' => $draftCover,
+            'author_name' => 'Draft Author',
+            'comments_enabled' => 0,
+        ]);
+
+        self::assertSame($liveRow, $this->liveRow($id));
+        self::assertSame($live, $this->posts->findPublishedBySlug('live-slug'));
+        self::assertNull($this->posts->findPublishedBySlug('draft-slug'));
+        self::assertSame([$live], $this->posts->listPublished(10, 0));
+        self::assertArrayNotHasKey('has_draft', $live);
+
+        $pending = $this->posts->find($id);
+        self::assertTrue($pending['has_draft']);
+        self::assertSame('published', $pending['status']);
+        self::assertSame($live['published_at'], $pending['published_at']);
+        self::assertSame($live['created_at'], $pending['created_at']);
+        self::assertSame('draft-slug', $pending['slug']);
+        self::assertSame('Draft title', $pending['title']);
+        self::assertSame('Draft excerpt', $pending['excerpt']);
+        self::assertStringContainsString('<strong>Draft body</strong>', $pending['body_html']);
+        self::assertSame(['Mobility', 'Strength'], $pending['categories']);
+        self::assertSame('Mobility', $pending['category']);
+        self::assertSame(['hip'], $pending['tags']);
+        self::assertSame([['question' => 'Q?', 'answer' => 'A.']], $pending['faq']);
+        self::assertSame('Draft meta', $pending['meta_title']);
+        self::assertSame('Draft description', $pending['meta_description']);
+        self::assertSame($draftCover, $pending['cover_media_id']);
+        self::assertSame('Draft Author', $pending['author_name']);
+        self::assertSame(0, $pending['comments_enabled']);
+        self::assertSame($pending, $this->posts->listAll()[0]);
+        self::assertSame($pending, $this->posts->listAll('published')[0]);
+        self::assertSame([], $this->posts->listAll('draft'));
+        self::assertTrue($this->posts->slugInUse('draft-slug', null));
+        self::assertTrue($this->posts->slugInUse('live-slug', null));
+        self::assertFalse($this->posts->slugInUse('draft-slug', $id));
+        self::assertFalse($this->posts->slugInUse('live-slug', $id));
+
+        $this->posts->update($id, ['title' => 'Second title']);
+        $merged = $this->posts->find($id);
+        self::assertSame('Second title', $merged['title']);
+        self::assertSame('draft-slug', $merged['slug']);
+        self::assertSame(['hip'], $merged['tags']);
+        self::assertSame($draftCover, $merged['cover_media_id']);
+        self::assertSame(1, $this->draftCount());
+        self::assertSame($liveRow, $this->liveRow($id));
+
+        $this->posts->publish($id);
+        self::assertSame(0, $this->draftCount());
+        self::assertNull($this->posts->findPublishedBySlug('live-slug'));
+        $promoted = $this->posts->findPublishedBySlug('draft-slug');
+        self::assertNotNull($promoted);
+        self::assertSame($id, $promoted['id']);
+        self::assertSame($live['published_at'], $promoted['published_at']);
+        foreach (['slug', 'title', 'excerpt', 'body_markdown', 'body_html', 'category', 'categories', 'tags', 'faq',
+            'meta_title', 'meta_description', 'cover_media_id', 'author_name', 'comments_enabled'] as $field) {
+            self::assertSame($merged[$field], $promoted[$field], $field);
+        }
+        $admin = $this->posts->find($id);
+        self::assertFalse($admin['has_draft']);
+        self::assertSame('published', $admin['status']);
+    }
+
+    public function testFailedPromotionLeavesLiveAndPendingVersionsIntact(): void
+    {
+        $id = $this->posts->create($this->postData('keeper'));
+        $this->posts->publish($id);
+        $this->posts->update($id, ['slug' => 'contested', 'title' => 'Pending title']);
+        $this->posts->create($this->postData('contested'));
+        $liveRow = $this->liveRow($id);
+        $pending = $this->posts->find($id);
+
+        try {
+            $this->posts->publish($id);
+            self::fail('Promoting onto another live slug must fail.');
+        } catch (\PDOException) {
+        }
+        self::assertFalse($this->pdo->inTransaction());
+        self::assertSame($liveRow, $this->liveRow($id));
+        self::assertSame($pending, $this->posts->find($id));
+        self::assertSame('A resource', $this->posts->findPublishedBySlug('keeper')['title']);
+
+        try {
+            $this->posts->unpublish($id);
+            self::fail('Moving pending edits onto another live slug must fail.');
+        } catch (\PDOException) {
+        }
+        self::assertSame($liveRow, $this->liveRow($id));
+        self::assertSame($pending, $this->posts->find($id));
+    }
+
+    public function testUnpublishKeepsPendingEditsAndDeleteAndMediaCleanupReachDrafts(): void
+    {
+        $id = $this->posts->create($this->postData('to-unpublish'));
+        $this->posts->publish($id);
+        $publishedAt = $this->posts->find($id)['published_at'];
+        $this->posts->update($id, ['title' => 'Kept edit', 'tags' => ['kept']]);
+
+        $this->posts->unpublish($id);
+        $post = $this->posts->find($id);
+        self::assertSame('draft', $post['status']);
+        self::assertFalse($post['has_draft']);
+        self::assertSame('Kept edit', $post['title']);
+        self::assertSame(['kept'], $post['tags']);
+        self::assertSame($publishedAt, $post['published_at']);
+        self::assertSame(0, $this->draftCount());
+        self::assertNull($this->posts->findPublishedBySlug('to-unpublish'));
+
+        $media = new MediaRepository($this->pdo);
+        $cover = $media->create($this->mediaData('cover.webp'));
+        $otherId = $this->posts->create($this->postData('with-draft'));
+        $this->posts->publish($otherId);
+        $this->posts->update($otherId, ['cover_media_id' => $cover]);
+        $media->delete($cover);
+        $pending = $this->posts->find($otherId);
+        self::assertTrue($pending['has_draft']);
+        self::assertNull($pending['cover_media_id']);
+
+        $this->posts->delete($otherId);
+        self::assertNull($this->posts->find($otherId));
+        self::assertSame(0, $this->draftCount());
+        self::assertFalse($this->posts->slugInUse('with-draft', null));
+    }
+
     public function testPostJsonIsEncodedAndDecodedAndMarkdownIsRegenerated(): void
     {
         $data = $this->postData('json-post');
@@ -291,6 +440,8 @@ final class RepositoryTest extends TestCase
 
         Migrator::migrate($pdo);
         $posts = new PostRepository($pdo);
+        self::assertSame(0, (int) $pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
+        self::assertSame([false, false, false], array_column($posts->listAll(), 'has_draft'));
 
         $published = $posts->findPublishedBySlug('published-legacy');
         self::assertNotNull($published);
@@ -315,9 +466,17 @@ final class RepositoryTest extends TestCase
         Migrator::migrate($pdo);
         Migrator::migrate($pdo);
 
+        self::assertSame(3, (int) $pdo->query('SELECT COUNT(*) FROM posts')->fetchColumn());
+        self::assertSame(1, (int) $pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn());
         self::assertSame([], $posts->find($draftId)['categories']);
         self::assertSame('', $posts->find($draftId)['category']);
+        self::assertFalse($posts->find($draftId)['has_draft']);
         self::assertSame(['Recovery', 'Rehab'], $posts->find($publishedId)['categories']);
+        self::assertTrue($posts->find($publishedId)['has_draft']);
+        self::assertSame(['Rehab'], $posts->findPublishedBySlug('published-legacy')['categories']);
+        $posts->publish($publishedId);
+        self::assertSame(['Recovery', 'Rehab'], $posts->findPublishedBySlug('published-legacy')['categories']);
+        self::assertSame('2024-01-01T00:00:00Z', $posts->findPublishedBySlug('published-legacy')['published_at']);
         self::assertSame(
             ['categories' => ['Mobility', 'Recovery', 'Rehab'], 'tags' => ['hip', 'rehab', 'strength']],
             $posts->taxonomy()
@@ -326,6 +485,34 @@ final class RepositoryTest extends TestCase
             6,
             (int) $pdo->query('SELECT COUNT(*) FROM taxonomy_terms')->fetchColumn()
         );
+    }
+
+    /** @return array<string, mixed> */
+    private function liveRow(int $id): array
+    {
+        $row = $this->pdo->query('SELECT * FROM posts WHERE id = ' . $id)->fetch();
+        self::assertIsArray($row);
+
+        return $row;
+    }
+
+    private function draftCount(): int
+    {
+        return (int) $this->pdo->query('SELECT COUNT(*) FROM post_drafts')->fetchColumn();
+    }
+
+    /** @return array<string, mixed> */
+    private function mediaData(string $filename): array
+    {
+        return [
+            'filename' => $filename,
+            'original_name' => $filename,
+            'mime_type' => 'image/webp',
+            'size_bytes' => 100,
+            'width' => 10,
+            'height' => 10,
+            'alt_text' => 'Cover',
+        ];
     }
 
     private function termCount(string $kind, string $name): int

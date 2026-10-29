@@ -333,7 +333,10 @@ export function PostWorkspace({
       refreshPosts(post.status)
       setNotice({
         kind: "success",
-        message: post.status === "published" ? "Changes saved." : "Draft saved.",
+        message:
+          post.status === "published" && post.has_draft
+            ? "Draft saved. The published version is unchanged until you publish these changes."
+            : "Draft saved.",
       })
     } catch (error) {
       reportMutationError(error)
@@ -389,6 +392,7 @@ export function PostWorkspace({
           ? {
               ...current,
               status: post.status,
+              has_draft: post.has_draft,
               published_at: post.published_at,
               updated_at: post.updated_at,
             }
@@ -595,7 +599,9 @@ export function PostWorkspace({
                           /{post.slug}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          Updated {formatDate(post.updated_at)}
+                          {post.has_draft ? "Draft updated" : "Updated"}{" "}
+                          {formatDate(post.updated_at)}
+                          {post.has_draft ? " · Pending changes" : null}
                         </span>
                       </button>
                     </li>
