@@ -7,3 +7,4 @@
 /api/public/uploads/*
 !/api/public/uploads/.htaccess
 /api/var/*
+/frontend/node_modules/
