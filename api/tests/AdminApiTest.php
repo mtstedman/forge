@@ -11,11 +11,13 @@ use Forge\Api\Config;
 use Forge\Api\Database;
 use Forge\Api\Migrator;
 use Forge\Api\Repository\CommentRepository;
+use Forge\Api\Repository\ConsultationRequestRepository;
 use Forge\Api\Repository\PostRepository;
 use OpenSSLAsymmetricKey;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
+use RuntimeException;
 use Slim\App;
 use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Factory\StreamFactory;
@@ -25,6 +27,10 @@ final class AdminApiTest extends TestCase
     private PDO $pdo;
     private App $app;
     private OpenSSLAsymmetricKey $privateKey;
+    private bool $captchaAccepted = true;
+    private ?RuntimeException $captchaFailure = null;
+    /** @var list<string> */
+    private array $captchaTokens = [];
 
     protected function setUp(): void
     {
@@ -45,6 +51,14 @@ final class AdminApiTest extends TestCase
             'OAUTH_REQUIRED_SCOPE' => 'admin',
         ]), [
             'jwt_key_provider' => fn (): array => ['test-key' => new Key($details['key'], 'RS256')],
+            'captcha_verifier' => function (string $token): bool {
+                $this->captchaTokens[] = $token;
+                if ($this->captchaFailure !== null) {
+                    throw $this->captchaFailure;
+                }
+
+                return $this->captchaAccepted;
+            },
         ]);
     }
 
@@ -346,6 +360,254 @@ final class AdminApiTest extends TestCase
         self::assertSame(['Rehab'], $post['categories']);
         self::assertSame(['knee'], $post['tags']);
         self::assertSame(['categories' => ['Rehab'], 'tags' => ['knee']], $this->taxonomy());
+    }
+
+    public function testConsultationPublicSubmissionPersistsPopulatedAndOmittedOptionalFields(): void
+    {
+        $submitted = $this->consultationPayload([
+            'name' => '  Taylor Client  ',
+            'phone' => '  (612) 555-0199  ',
+            'email' => '  taylor@example.com  ',
+            'best_time' => ' Afternoon ',
+            'message' => "  First line\r\nSecond line  ",
+            'captcha_token' => ' accepted-token-one ',
+        ]);
+        $created = $this->request('POST', '/consultation-requests', $submitted, false);
+        self::assertSame(201, $created->getStatusCode());
+        self::assertSame('no-store', $created->getHeaderLine('Cache-Control'));
+        self::assertSame(['status' => 'pending'], $this->decode($created));
+
+        $repository = new ConsultationRequestRepository($this->pdo);
+        $first = $repository->find(1);
+        self::assertNotNull($first);
+        self::assertSame('Taylor Client', $first['name']);
+        self::assertSame('(612) 555-0199', $first['phone']);
+        self::assertSame('taylor@example.com', $first['email']);
+        self::assertSame('Afternoon', $first['best_time']);
+        self::assertSame("First line\nSecond line", $first['message']);
+        self::assertSame('pending', $first['status']);
+        self::assertMatchesRegularExpression('/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/', $first['consented_at']);
+        self::assertSame($first['consented_at'], $first['created_at']);
+        self::assertNull($first['resolved_at']);
+
+        $omitted = $this->consultationPayload([
+            'name' => 'Optional Fields Omitted',
+            'phone' => '612-555-0100',
+            'best_time' => 'Morning',
+            'captcha_token' => 'accepted-token-two',
+        ]);
+        unset($omitted['email'], $omitted['message']);
+        $createdOmitted = $this->request('POST', '/consultation-requests', $omitted, false);
+        self::assertSame(201, $createdOmitted->getStatusCode());
+        self::assertSame(['status' => 'pending'], $this->decode($createdOmitted));
+
+        $second = $repository->find(2);
+        self::assertNotNull($second);
+        self::assertNull($second['email']);
+        self::assertSame('', $second['message']);
+        self::assertSame(['accepted-token-one', 'accepted-token-two'], $this->captchaTokens);
+
+        Migrator::migrate($this->pdo);
+        self::assertSame('Taylor Client', $repository->find(1)['name']);
+        self::assertSame('Optional Fields Omitted', $repository->find(2)['name']);
+    }
+
+    public function testConsultationValidationRejectsInvalidJsonFieldsWithoutCaptchaOrInsert(): void
+    {
+        $cases = [
+            'missing name' => [[], ['name'], 'name'],
+            'non-string name' => [['name' => ['Taylor']], [], 'name'],
+            'blank name' => [['name' => '  '], [], 'name'],
+            'long name' => [['name' => str_repeat('n', 81)], [], 'name'],
+            'missing phone' => [[], ['phone'], 'phone'],
+            'non-string phone' => [['phone' => 6125550100], [], 'phone'],
+            'blank phone' => [['phone' => '  '], [], 'phone'],
+            'long phone' => [['phone' => str_repeat('1', 65)], [], 'phone'],
+            'invalid email' => [['email' => 'not-an-email'], [], 'email'],
+            'non-string email' => [['email' => false], [], 'email'],
+            'long email' => [['email' => str_repeat('a', 246) . '@example.com'], [], 'email'],
+            'non-string message' => [['message' => ['private']], [], 'message'],
+            'long message' => [['message' => str_repeat('m', 5001)], [], 'message'],
+            'missing best time' => [[], ['best_time'], 'best_time'],
+            'non-string best time' => [['best_time' => 1], [], 'best_time'],
+            'invalid best time' => [['best_time' => 'Night'], [], 'best_time'],
+            'missing consent' => [[], ['consent'], 'consent'],
+            'false consent' => [['consent' => false], [], 'consent'],
+            'non-boolean consent' => [['consent' => 'true'], [], 'consent'],
+            'missing captcha' => [[], ['captcha_token'], 'captcha_token'],
+            'non-string captcha' => [['captcha_token' => ['token']], [], 'captcha_token'],
+            'blank captcha' => [['captcha_token' => '  '], [], 'captcha_token'],
+            'long captcha' => [['captcha_token' => str_repeat('t', 2049)], [], 'captcha_token'],
+        ];
+
+        foreach ($cases as $label => [$changes, $removed, $field]) {
+            $payload = $this->consultationPayload($changes);
+            foreach ($removed as $key) {
+                unset($payload[$key]);
+            }
+
+            $response = $this->request('POST', '/consultation-requests', $payload, false);
+            self::assertSame(422, $response->getStatusCode(), $label);
+            self::assertSame('no-store', $response->getHeaderLine('Cache-Control'), $label);
+            $body = $this->decode($response);
+            self::assertSame('Validation failed.', $body['error'], $label);
+            self::assertArrayHasKey($field, $body['fields'], $label);
+        }
+
+        self::assertSame([], $this->captchaTokens);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM consultation_requests')->fetchColumn());
+    }
+
+    public function testConsultationCaptchaRejectionAndUnavailableProviderNeverInsert(): void
+    {
+        $this->captchaAccepted = false;
+        $rejected = $this->request('POST', '/consultation-requests', $this->consultationPayload([
+            'name' => 'Sensitive Name',
+            'message' => 'Sensitive message',
+            'captcha_token' => 'rejected-token',
+        ]), false);
+        self::assertSame(422, $rejected->getStatusCode());
+        self::assertArrayHasKey('captcha_token', $this->decode($rejected)['fields']);
+        self::assertStringNotContainsString('Sensitive Name', (string) $rejected->getBody());
+        self::assertStringNotContainsString('Sensitive message', (string) $rejected->getBody());
+
+        $this->captchaAccepted = true;
+        $this->captchaFailure = new RuntimeException('provider detail that must not be exposed');
+        $unavailable = $this->request('POST', '/consultation-requests', $this->consultationPayload([
+            'captcha_token' => 'unavailable-token',
+        ]), false);
+        self::assertSame(503, $unavailable->getStatusCode());
+        self::assertSame(['error' => 'CAPTCHA verification is unavailable.'], $this->decode($unavailable));
+        self::assertSame('no-store', $unavailable->getHeaderLine('Cache-Control'));
+
+        self::assertSame(['rejected-token', 'unavailable-token'], $this->captchaTokens);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM consultation_requests')->fetchColumn());
+    }
+
+    public function testConsultationAdminAuthenticationFiltersPaginationAndValidation(): void
+    {
+        $repository = new ConsultationRequestRepository($this->pdo);
+        $ids = [];
+        for ($number = 1; $number <= 23; $number++) {
+            $ids[] = $repository->create([
+                'name' => 'Request ' . $number,
+                'phone' => '612-555-' . str_pad((string) $number, 4, '0', STR_PAD_LEFT),
+                'email' => null,
+                'best_time' => 'Morning',
+                'message' => '',
+            ]);
+        }
+        $repository->setStatus($ids[0], 'completed');
+        $repository->setStatus($ids[1], 'ignored');
+
+        self::assertSame(401, $this->request('GET', '/admin/consultation-requests', null, false)->getStatusCode());
+        self::assertSame(401, $this->request('PATCH', '/admin/consultation-requests/' . $ids[2], ['status' => 'completed'], false)->getStatusCode());
+
+        $default = $this->request('GET', '/admin/consultation-requests');
+        self::assertSame(200, $default->getStatusCode());
+        $defaultBody = $this->decode($default);
+        self::assertCount(20, $defaultBody['data']);
+        self::assertSame($ids[22], $defaultBody['data'][0]['id']);
+        self::assertSame(['page' => 1, 'per_page' => 20], $defaultBody['meta']);
+
+        $secondPage = $this->decode($this->request('GET', '/admin/consultation-requests?status=pending&page=2'));
+        self::assertCount(1, $secondPage['data']);
+        self::assertSame($ids[2], $secondPage['data'][0]['id']);
+        self::assertSame(['page' => 2, 'per_page' => 20], $secondPage['meta']);
+
+        $completed = $this->decode($this->request('GET', '/admin/consultation-requests?status=completed'));
+        self::assertSame([$ids[0]], array_column($completed['data'], 'id'));
+        $ignored = $this->decode($this->request('GET', '/admin/consultation-requests?status=ignored'));
+        self::assertSame([$ids[1]], array_column($ignored['data'], 'id'));
+
+        foreach (['status=unknown' => 'status', 'page=0' => 'page', 'page=1.5' => 'page', 'status[]=pending' => 'status'] as $query => $field) {
+            $invalid = $this->request('GET', '/admin/consultation-requests?' . $query);
+            self::assertSame(422, $invalid->getStatusCode(), $query);
+            self::assertArrayHasKey($field, $this->decode($invalid)['fields'], $query);
+        }
+
+        $invalidUpdate = $this->request('PATCH', '/admin/consultation-requests/' . $ids[2], ['status' => 'pending']);
+        self::assertSame(422, $invalidUpdate->getStatusCode());
+        self::assertArrayHasKey('status', $this->decode($invalidUpdate)['fields']);
+        self::assertSame('pending', $repository->find($ids[2])['status']);
+    }
+
+    public function testConsultationFrontendPayloadLifecycleMovesRequestsBetweenAdminQueues(): void
+    {
+        $completedPayload = $this->consultationPayload([
+            'name' => 'Frontend Complete',
+            'phone' => '612-555-0101',
+            'email' => 'complete@example.com',
+            'best_time' => 'Midday',
+            'message' => 'Please call after lunch.',
+            'captcha_token' => 'frontend-complete-token',
+        ]);
+        $ignoredPayload = $this->consultationPayload([
+            'name' => 'Frontend Ignore',
+            'phone' => '612-555-0102',
+            'email' => '',
+            'best_time' => 'Evening',
+            'message' => '',
+            'captcha_token' => 'frontend-ignore-token',
+        ]);
+        self::assertSame(201, $this->request('POST', '/consultation-requests', $completedPayload, false)->getStatusCode());
+        self::assertSame(201, $this->request('POST', '/consultation-requests', $ignoredPayload, false)->getStatusCode());
+
+        $pending = $this->decode($this->request('GET', '/admin/consultation-requests'))['data'];
+        self::assertSame(['Frontend Ignore', 'Frontend Complete'], array_column($pending, 'name'));
+        $byName = array_column($pending, null, 'name');
+        self::assertSame('612-555-0101', $byName['Frontend Complete']['phone']);
+        self::assertSame('complete@example.com', $byName['Frontend Complete']['email']);
+        self::assertSame('Midday', $byName['Frontend Complete']['best_time']);
+        self::assertSame('Please call after lunch.', $byName['Frontend Complete']['message']);
+        self::assertNull($byName['Frontend Ignore']['email']);
+        self::assertSame('', $byName['Frontend Ignore']['message']);
+        self::assertSame(
+            ['id', 'name', 'phone', 'email', 'best_time', 'message', 'consented_at', 'status', 'created_at', 'resolved_at'],
+            array_keys($pending[0]),
+        );
+
+        $completedId = $byName['Frontend Complete']['id'];
+        $ignoredId = $byName['Frontend Ignore']['id'];
+        $completed = $this->decode($this->request('PATCH', '/admin/consultation-requests/' . $completedId, ['status' => 'completed']))['data'];
+        self::assertSame('completed', $completed['status']);
+        self::assertNotNull($completed['resolved_at']);
+        self::assertSame('Please call after lunch.', $completed['message']);
+        $resolvedAt = $completed['resolved_at'];
+
+        $repeated = $this->decode($this->request('PATCH', '/admin/consultation-requests/' . $completedId, ['status' => 'completed']))['data'];
+        self::assertSame($resolvedAt, $repeated['resolved_at']);
+
+        $ignored = $this->decode($this->request('PATCH', '/admin/consultation-requests/' . $ignoredId, ['status' => 'ignored']))['data'];
+        self::assertSame('ignored', $ignored['status']);
+        self::assertNotNull($ignored['resolved_at']);
+        self::assertNull($ignored['email']);
+
+        self::assertSame([], $this->decode($this->request('GET', '/admin/consultation-requests'))['data']);
+        self::assertSame([$completedId], array_column($this->decode($this->request('GET', '/admin/consultation-requests?status=completed'))['data'], 'id'));
+        self::assertSame([$ignoredId], array_column($this->decode($this->request('GET', '/admin/consultation-requests?status=ignored'))['data'], 'id'));
+
+        $invalid = $this->request('PATCH', '/admin/consultation-requests/' . $completedId, ['status' => 'reopened']);
+        self::assertSame(422, $invalid->getStatusCode());
+        self::assertSame('completed', (new ConsultationRequestRepository($this->pdo))->find($completedId)['status']);
+
+        $missing = $this->request('PATCH', '/admin/consultation-requests/999999', ['status' => 'completed']);
+        self::assertSame(404, $missing->getStatusCode());
+        self::assertSame(['error' => 'Consultation request not found.'], $this->decode($missing));
+    }
+
+    /** @param array<string, mixed> $overrides @return array<string, mixed> */
+    private function consultationPayload(array $overrides = []): array
+    {
+        return array_replace([
+            'name' => 'Taylor Client',
+            'phone' => '612-555-0199',
+            'email' => 'taylor@example.com',
+            'best_time' => 'Afternoon',
+            'message' => 'I would like to schedule a consultation.',
+            'consent' => true,
+            'captcha_token' => 'accepted-token',
+        ], $overrides);
     }
 
     /** @return array<string, mixed> */

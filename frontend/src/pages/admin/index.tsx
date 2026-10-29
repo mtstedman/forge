@@ -7,13 +7,14 @@ import { useCallback, useEffect, useState } from "react"
 import { AdminLayout } from "@/components/admin/admin-layout"
 import { AdminAuthProvider, useAdminAuth } from "@/components/admin/auth-provider"
 import { CommentsPanel } from "@/components/admin/comments-panel"
+import { ConsultationsPanel } from "@/components/admin/consultations-panel"
 import { AdminLogin } from "@/components/admin/login"
 import { MediaPanel } from "@/components/admin/media-panel"
 import { PostWorkspace } from "@/components/admin/post-workspace"
 import { getFrontendConfig } from "@/lib/config.server"
 import type { MediaItem, PublicConfig } from "@/lib/types"
 
-type AdminTab = "posts" | "media" | "comments"
+type AdminTab = "posts" | "media" | "comments" | "consultations"
 
 type AdminPageProps = {
   /** Explicit public subset only; server-side settings are never serialized. */
@@ -133,7 +134,7 @@ function AdminWorkspace({ ssoEnabled }: { ssoEnabled: boolean }): React.JSX.Elem
       <section aria-label="Posts" hidden={active !== "posts"}>
         <PostWorkspace insertImage={pendingImage} onImageInserted={imageInserted} />
       </section>
-      {/* Media and comments remount on each visit so they show current API data. */}
+      {/* Queue panels remount on each visit so they show current API data. */}
       {active === "media" ? (
         <section aria-label="Media">
           <MediaPanel onInsertImage={insertImage} />
@@ -142,6 +143,11 @@ function AdminWorkspace({ ssoEnabled }: { ssoEnabled: boolean }): React.JSX.Elem
       {active === "comments" ? (
         <section aria-label="Comments">
           <CommentsPanel />
+        </section>
+      ) : null}
+      {active === "consultations" ? (
+        <section aria-label="Consultations">
+          <ConsultationsPanel />
         </section>
       ) : null}
     </AdminLayout>

@@ -7,6 +7,7 @@ namespace Forge\Api\Routes;
 use Forge\Api\Config;
 use Forge\Api\Controller\AdminAuthController;
 use Forge\Api\Controller\AdminCommentController;
+use Forge\Api\Controller\AdminConsultationRequestController;
 use Forge\Api\Controller\AdminMediaController;
 use Forge\Api\Controller\AdminPostController;
 use Forge\Api\Repository\AdminSessionRepository;
@@ -22,6 +23,7 @@ final class AdminRoutes
     {
         $posts = new AdminPostController($pdo);
         $comments = new AdminCommentController($pdo);
+        $consultations = new AdminConsultationRequestController($pdo);
         $media = new AdminMediaController($pdo, $config);
         $auth = new AdminAuthController(new AdminUserRepository($pdo), new AdminSessionRepository($pdo));
 
@@ -51,6 +53,9 @@ final class AdminRoutes
         $group->get('/comments', [$comments, 'index']);
         $group->patch('/comments/{id:[0-9]+}', [$comments, 'update']);
         $group->delete('/comments/{id:[0-9]+}', [$comments, 'delete']);
+
+        $group->get('/consultation-requests', [$consultations, 'index']);
+        $group->patch('/consultation-requests/{id:[0-9]+}', [$consultations, 'update']);
 
         $group->get('/media', [$media, 'index']);
         $group->post('/media', [$media, 'upload']);

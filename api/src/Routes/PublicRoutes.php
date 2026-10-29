@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Forge\Api\Routes;
 
+use Forge\Api\Captcha\TurnstileVerifier;
 use Forge\Api\Config;
 use Forge\Api\Controller\PublicCommentController;
+use Forge\Api\Controller\PublicConsultationRequestController;
 use Forge\Api\Controller\PublicPostController;
 use Forge\Api\Repository\CommentRepository;
+use Forge\Api\Repository\ConsultationRequestRepository;
 use Forge\Api\Repository\MediaRepository;
 use Forge\Api\Repository\PostRepository;
 use PDO;
@@ -23,14 +26,23 @@ use Slim\Interfaces\RouteCollectorProxyInterface;
  */
 final class PublicRoutes
 {
-    public static function register(RouteCollectorProxyInterface $routes, PDO $pdo, Config $config): void
-    {
+    public static function register(
+        RouteCollectorProxyInterface $routes,
+        PDO $pdo,
+        Config $config,
+        ?callable $captchaVerifier = null,
+    ): void {
         $postRepository = new PostRepository($pdo);
         $commentRepository = new CommentRepository($pdo);
 
         $posts = new PublicPostController($postRepository, $commentRepository, new MediaRepository($pdo), $config);
         $comments = new PublicCommentController($postRepository, $commentRepository, $config);
+        $consultations = new PublicConsultationRequestController(
+            new ConsultationRequestRepository($pdo),
+            $captchaVerifier ?? new TurnstileVerifier($config),
+        );
 
+        $routes->post('/consultation-requests', [$consultations, 'create']);
         $routes->get('/posts', [$posts, 'index']);
         $routes->get('/posts/{slug}', [$posts, 'show']);
         $routes->get('/posts/{slug}/comments', [$comments, 'list']);

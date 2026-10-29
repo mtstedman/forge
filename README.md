@@ -194,6 +194,8 @@ non-development value in production.
 | `MEDIA_BASE_URL` | `/uploads` | Public upload URL prefix |
 | `DATABASE_URL`, `DB_CONNECTION`, `DB_DATABASE` | unset | Database connection settings |
 | `ADMIN_PASSWORD` | unset | One-command password input for `create-admin.php` |
+| `TURNSTILE_SECRET_KEY` | unset | Server-only Cloudflare Turnstile secret for consultation CAPTCHA verification |
+| `TURNSTILE_EXPECTED_HOSTNAME` | unset | Hostname the verified Turnstile token must report, e.g. `ancoratiming.com` |
 
 ### Next.js frontend (`frontend/.env.local` or process environment)
 
@@ -208,6 +210,7 @@ non-development value in production.
 | `OAUTH_AUDIENCE` | Audience requested by the frontend; match the API value |
 | `OAUTH_SCOPE` | Requested scopes |
 | `OAUTH_REDIRECT_URI` | Exact registered callback, ending in `/admin/` |
+| `TURNSTILE_SITE_KEY` | Public Cloudflare Turnstile site key for the consultation widget |
 
 ## Routes and compatibility
 
@@ -253,6 +256,44 @@ Public comments are accepted only when `PUBLIC_COMMENTS_ENABLED=true`,
 `APP_KEY` is set and the individual post has comments enabled. New comments are
 always pending until an administrator approves them. The public API does not
 return commenter email addresses or IP hashes.
+
+## Consultation CAPTCHA (Cloudflare Turnstile)
+
+Consultation requests are protected by Cloudflare Turnstile. The frontend renders
+the widget with Turnstile explicit rendering and the action `consultation`; the
+API verifies every submitted token server-side through
+`https://challenges.cloudflare.com/turnstile/v0/siteverify`
+(`Forge\Api\Captcha\TurnstileVerifier`). Only the secret and the widget token
+are sent to Cloudflare, never consultation form fields. A token is accepted only
+when the provider reports `success: true`, the reported hostname equals
+`TURNSTILE_EXPECTED_HOSTNAME` and the action is exactly `consultation`.
+Requests use a 3-second connection and 5-second total timeout.
+
+Settings are split between the two runtimes:
+
+- PHP API (repository-root `.env` or process environment):
+  `TURNSTILE_SECRET_KEY` and `TURNSTILE_EXPECTED_HOSTNAME`. The secret is
+  server-only: never put it in `frontend/` env files, server-rendered props or
+  Git.
+- Next.js frontend (`frontend/.env.local`, `app/frontend/.env.production.local`
+  or process environment): `TURNSTILE_SITE_KEY`, the public site key.
+
+Provider setup: in the Cloudflare dashboard create a Turnstile widget, add the
+website hostname (for production `ancoratiming.com`; add `localhost` only to a
+separate development widget) to the widget's allowed hostnames, then copy its
+site key to the frontend setting and its secret key to the API setting. The
+expected hostname must match the hostname the widget runs on.
+
+There are no built-in test keys and no bypass. Missing or invalid credentials,
+provider/network failures and malformed provider responses fail closed, so
+consultation submission stays unavailable until valid keys and the allowed
+hostname are configured.
+
+**Deployment dependency (not yet completed):** activation requires an operator
+to provision a Turnstile widget with the production allowed hostname and to set
+`TURNSTILE_SECRET_KEY`, `TURNSTILE_EXPECTED_HOSTNAME` (API) and
+`TURNSTILE_SITE_KEY` (frontend) on the deployed hosts. Availability of these
+keys has not been verified; this repository change does not configure them.
 
 ## Persistent uploads
 

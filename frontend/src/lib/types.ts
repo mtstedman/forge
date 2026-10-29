@@ -45,12 +45,45 @@ export type PublicConfig = {
     scope: string
     redirectUri: string
   } | null
+  turnstileSiteKey?: string
 }
 
 export type AdminUser = {
   sub: string
   name: string
   email: string
+}
+
+export type ConsultationStatus = "pending" | "completed" | "ignored"
+
+export type ConsultationBestTime = "Morning" | "Midday" | "Afternoon" | "Evening"
+
+export type ConsultationRequest = {
+  id: number
+  name: string
+  phone: string
+  email: string | null
+  best_time: ConsultationBestTime
+  message: string
+  status: ConsultationStatus
+  consented_at: string
+  created_at: string
+  resolved_at: string | null
+}
+
+export type ConsultationRequestInput = {
+  name: string
+  phone: string
+  email?: string
+  best_time: ConsultationBestTime
+  message?: string
+  consent: true
+  captcha_token: string
+}
+
+export type ConsultationRequestsResponse = {
+  data: ConsultationRequest[]
+  meta: { page: number; per_page: number }
 }
 
 export type MediaItem = {

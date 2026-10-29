@@ -11,6 +11,8 @@ type HomePageProps = {
   posts: PostSummary[]
   resourcesUnavailable: boolean
   siteUrl: string
+  apiUrl: string
+  turnstileSiteKey: string
 }
 
 const title = "Forge Performance Therapy — Twin Cities"
@@ -34,6 +36,8 @@ export const getServerSideProps: GetServerSideProps<HomePageProps> = async () =>
       posts,
       resourcesUnavailable,
       siteUrl: publicConfig.siteUrl,
+      apiUrl: publicConfig.apiUrl,
+      turnstileSiteKey: publicConfig.turnstileSiteKey ?? "",
     },
   }
 }
@@ -42,6 +46,8 @@ export default function HomePage({
   posts,
   resourcesUnavailable,
   siteUrl,
+  apiUrl,
+  turnstileSiteKey,
 }: InferGetServerSidePropsType<typeof getServerSideProps>): React.JSX.Element {
   const canonical = `${siteUrl}/`
   const jsonLd = {
@@ -80,7 +86,12 @@ export default function HomePage({
     <>
       <Seo title={title} description={description} canonical={canonical} jsonLd={jsonLd} />
       <PublicLayout active="home">
-        <HomeSections posts={posts} resourcesUnavailable={resourcesUnavailable} />
+        <HomeSections
+          posts={posts}
+          resourcesUnavailable={resourcesUnavailable}
+          apiUrl={apiUrl}
+          turnstileSiteKey={turnstileSiteKey}
+        />
       </PublicLayout>
     </>
   )

@@ -64,6 +64,22 @@ CREATE INDEX IF NOT EXISTS idx_comments_post_id_status
 CREATE INDEX IF NOT EXISTS idx_comments_ip_hash_created_at
     ON comments(ip_hash, created_at);
 
+CREATE TABLE IF NOT EXISTS consultation_requests (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT NULL,
+    best_time TEXT NOT NULL CHECK (best_time IN ('Morning', 'Midday', 'Afternoon', 'Evening')),
+    message TEXT NOT NULL DEFAULT '',
+    consented_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'ignored')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolved_at TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_consultation_requests_status_created_at
+    ON consultation_requests(status, created_at, id);
+
 CREATE TABLE IF NOT EXISTS admin_users (
     id INTEGER PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,

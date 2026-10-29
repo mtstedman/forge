@@ -25,6 +25,8 @@ export function getFrontendConfig(): {
   const tokenUrl = env("OAUTH_TOKEN_URL")
   const clientId = env("OAUTH_CLIENT_ID")
   const redirectUri = env("OAUTH_REDIRECT_URI")
+  // Public Turnstile site key only. The Turnstile secret is API-only and is never read here.
+  const turnstileSiteKey = env("TURNSTILE_SITE_KEY")
 
   const oauth: PublicConfig["oauth"] =
     authorizeUrl !== "" && tokenUrl !== "" && clientId !== "" && redirectUri !== ""
@@ -44,6 +46,8 @@ export function getFrontendConfig(): {
       siteUrl,
       apiUrl,
       oauth,
+      // Omitted when unset so the value stays JSON-serialisable in page props.
+      ...(turnstileSiteKey !== "" ? { turnstileSiteKey } : {}),
     },
   }
 }

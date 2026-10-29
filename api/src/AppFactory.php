@@ -27,7 +27,8 @@ use Throwable;
  * Builds the Slim application for the Forge JSON API.
  *
  * $overrides is reserved for test injection, e.g. 'jwt_key_provider'
- * (a callable returning array<string, \Firebase\JWT\Key>).
+ * (a callable returning array<string, \Firebase\JWT\Key>) and
+ * 'captcha_verifier' (a callable accepting a token and returning bool).
  */
 final class AppFactory
 {
@@ -51,7 +52,12 @@ final class AppFactory
             return self::json($response, ['status' => 'ok']);
         });
 
-        PublicRoutes::register($app, $pdo, $config);
+        $captchaVerifier = $overrides['captcha_verifier'] ?? null;
+        if ($captchaVerifier !== null && !is_callable($captchaVerifier)) {
+            throw new \InvalidArgumentException('captcha_verifier must be callable.');
+        }
+        PublicRoutes::register($app, $pdo, $config, $captchaVerifier);
+
         $keyProvider = $overrides['jwt_key_provider'] ?? null;
         if ($keyProvider !== null && !is_callable($keyProvider)) {
             throw new \InvalidArgumentException('jwt_key_provider must be callable.');

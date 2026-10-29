@@ -1,13 +1,21 @@
 "use client"
 
-import { FileText, Images, LoaderCircle, LogOut, MessageSquare, ShieldCheck } from "lucide-react"
+import {
+  ClipboardList,
+  FileText,
+  Images,
+  LoaderCircle,
+  LogOut,
+  MessageSquare,
+  ShieldCheck,
+} from "lucide-react"
 import { useState } from "react"
 
 import { useAdminAuth } from "@/components/admin/auth-provider"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-type AdminTab = "posts" | "media" | "comments"
+type AdminTab = "posts" | "media" | "comments" | "consultations"
 
 const tabs: Array<{
   id: AdminTab
@@ -17,6 +25,7 @@ const tabs: Array<{
   { id: "posts", label: "Posts", icon: FileText },
   { id: "media", label: "Media", icon: Images },
   { id: "comments", label: "Comments", icon: MessageSquare },
+  { id: "consultations", label: "Consultations", icon: ClipboardList },
 ]
 
 export function AdminLayout({
@@ -98,7 +107,7 @@ export function AdminLayout({
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <nav
-          className="mb-6 grid grid-cols-3 gap-1 rounded-xl border bg-background p-1 shadow-xs sm:inline-flex"
+          className="mb-6 grid grid-cols-2 gap-1 rounded-xl border bg-background p-1 shadow-xs sm:inline-flex"
           aria-label="Admin sections"
         >
           {tabs.map((tab) => {

@@ -1,6 +1,7 @@
 import { ArrowRight, Mail, MapPin, Phone } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useCallback, useRef, useState, type FormEvent } from "react"
 
+import { ConsultationCaptcha } from "@/components/consultation-captcha"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { buttonVariants } from "@/components/ui/button"
 import {
@@ -13,12 +14,15 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import type { PostSummary } from "@/lib/types"
+import { ApiError, requestJson } from "@/lib/api"
+import type { ConsultationBestTime, ConsultationRequestInput, PostSummary } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 type HomeSectionsProps = {
   posts: PostSummary[]
   resourcesUnavailable: boolean
+  apiUrl: string
+  turnstileSiteKey: string
 }
 
 type SectionHeadingProps = {
@@ -216,39 +220,294 @@ function formatPostDate(value: string | null): string {
   }).format(date)
 }
 
-function ConsultationForm(): React.JSX.Element {
-  const [showNotice, setShowNotice] = useState(false)
+type ConsultationFormProps = {
+  apiUrl: string
+  turnstileSiteKey: string
+}
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setShowNotice(true)
+type ConsultationField =
+  | "name"
+  | "phone"
+  | "email"
+  | "best_time"
+  | "message"
+  | "consent"
+  | "captcha_token"
+
+type ConsultationFormStatus = {
+  state: "idle" | "sending" | "success" | "error"
+  message: string
+}
+
+const CONSULTATION_FIELDS: readonly ConsultationField[] = [
+  "name",
+  "phone",
+  "email",
+  "best_time",
+  "message",
+  "consent",
+  "captcha_token",
+]
+
+const CONSULTATION_FIELD_IDS: Record<Exclude<ConsultationField, "captcha_token">, string> = {
+  name: "consult-name",
+  phone: "consult-phone",
+  email: "consult-email",
+  best_time: "consult-time",
+  message: "consult-message",
+  consent: "consult-consent",
+}
+
+const BEST_TIMES: readonly ConsultationBestTime[] = ["Morning", "Midday", "Afternoon", "Evening"]
+
+const CAPTCHA_RETRY_MESSAGE =
+  "The security check wasn't accepted. Please complete it again and resend."
+const CONTACT_FALLBACK = "or call (612) 555-0148 or email hello@forgeperformance.com."
+
+function isBestTime(value: string): value is ConsultationBestTime {
+  return (BEST_TIMES as readonly string[]).includes(value)
+}
+
+function isPendingResponse(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as { status?: unknown }).status === "pending"
+  )
+}
+
+function consultationError(error: unknown): {
+  message: string
+  fields: Partial<Record<ConsultationField, string>>
+} {
+  const generic = `Your request could not be sent. Your details are still here, so please try again, ${CONTACT_FALLBACK}`
+  if (!(error instanceof ApiError)) return { message: generic, fields: {} }
+
+  switch (error.status) {
+    case 0:
+      return {
+        message: `We couldn't reach the server. Your details are still here. Check your connection and try again, ${CONTACT_FALLBACK}`,
+        fields: {},
+      }
+    case 422: {
+      const fields: Partial<Record<ConsultationField, string>> = {}
+      for (const [key, value] of Object.entries(error.fields)) {
+        if (value === "" || !(CONSULTATION_FIELDS as readonly string[]).includes(key)) continue
+        fields[key as ConsultationField] = key === "captcha_token" ? CAPTCHA_RETRY_MESSAGE : value
+      }
+      const keys = Object.keys(fields)
+      if (keys.length === 1 && keys[0] === "captcha_token") {
+        return { message: CAPTCHA_RETRY_MESSAGE, fields }
+      }
+      return {
+        message:
+          keys.length > 0
+            ? "Please check the highlighted fields and try again. Your details are still here."
+            : "Please check the form and try again. Your details are still here.",
+        fields,
+      }
+    }
+    case 429:
+      return {
+        message: "Too many requests were sent. Please wait a moment and try again.",
+        fields: {},
+      }
+    case 503:
+      return {
+        message: `Online requests are temporarily unavailable. Your details are still here, so please try again shortly, ${CONTACT_FALLBACK}`,
+        fields: {},
+      }
+    default:
+      return { message: generic, fields: {} }
   }
+}
+
+function ConsultationForm({ apiUrl, turnstileSiteKey }: ConsultationFormProps): React.JSX.Element {
+  const baseUrl = apiUrl.trim().replace(/\/+$/, "")
+  const formRef = useRef<HTMLFormElement>(null)
+  const submittingRef = useRef(false)
+  const [consent, setConsent] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const [captchaAvailable, setCaptchaAvailable] = useState(true)
+  const [captchaResetKey, setCaptchaResetKey] = useState(0)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<ConsultationField, string>>>({})
+  const [status, setStatus] = useState<ConsultationFormStatus>({ state: "idle", message: "" })
+
+  const apiConfigured = baseUrl !== ""
+  const sending = status.state === "sending"
+  const canSubmit = apiConfigured && captchaAvailable
+
+  const handleTokenChange = useCallback((token: string | null) => {
+    setCaptchaToken(token)
+    if (token !== null) {
+      setFieldErrors((current) => {
+        if (!current.captcha_token) return current
+        const next = { ...current }
+        delete next.captcha_token
+        return next
+      })
+    }
+  }, [])
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    if (submittingRef.current) return
+
+    if (!form.checkValidity()) {
+      form.reportValidity()
+      return
+    }
+
+    if (!canSubmit) {
+      setStatus({
+        state: "error",
+        message: `Online requests are unavailable right now. Please call (612) 555-0148 or email hello@forgeperformance.com.`,
+      })
+      return
+    }
+
+    if (captchaToken === null || captchaToken === "") {
+      setFieldErrors({ captcha_token: "Please complete the security check." })
+      setStatus({
+        state: "error",
+        message: "Please complete the security check before sending your request.",
+      })
+      return
+    }
+
+    const data = new FormData(form)
+    const value = (name: string): string => {
+      const raw = data.get(name)
+      return typeof raw === "string" ? raw.trim() : ""
+    }
+    const bestTime = value("best_time")
+    const email = value("email")
+    const message = value("message")
+    const payload: ConsultationRequestInput = {
+      name: value("name"),
+      phone: value("phone"),
+      ...(email !== "" ? { email } : {}),
+      best_time: isBestTime(bestTime) ? bestTime : "Morning",
+      ...(message !== "" ? { message } : {}),
+      consent: true,
+      captcha_token: captchaToken,
+    }
+
+    submittingRef.current = true
+    setFieldErrors({})
+    setStatus({ state: "sending", message: "Sending your request…" })
+
+    try {
+      const response = await requestJson<unknown>(baseUrl, "/consultation-requests", {
+        method: "POST",
+        credentials: "omit",
+        cache: "no-store",
+        body: JSON.stringify(payload),
+      })
+      if (!isPendingResponse(response)) {
+        throw new ApiError("The service returned an invalid response.", 502)
+      }
+
+      formRef.current?.reset()
+      setConsent(false)
+      setStatus({
+        state: "success",
+        message:
+          "Thank you. Your request was received, and Joseph will contact you to schedule your free consultation.",
+      })
+    } catch (error) {
+      const { message: errorMessage, fields } = consultationError(error)
+      setFieldErrors(fields)
+      setStatus({ state: "error", message: errorMessage })
+
+      const firstField = CONSULTATION_FIELDS.find(
+        (field): field is Exclude<ConsultationField, "captcha_token"> =>
+          field !== "captcha_token" && Boolean(fields[field])
+      )
+      if (firstField) document.getElementById(CONSULTATION_FIELD_IDS[firstField])?.focus()
+    } finally {
+      submittingRef.current = false
+      // Tokens are single-use: every attempt requires a fresh verification.
+      setCaptchaToken(null)
+      setCaptchaResetKey((key) => key + 1)
+    }
+  }
+
+  const describedBy = (field: ConsultationField, extra?: string): string | undefined => {
+    const ids = [extra, fieldErrors[field] ? `consult-${field}-error` : undefined].filter(Boolean)
+    return ids.length > 0 ? ids.join(" ") : undefined
+  }
+
+  const fieldError = (field: ConsultationField): React.ReactNode =>
+    fieldErrors[field] ? (
+      <p id={`consult-${field}-error`} className="text-sm text-destructive">
+        {fieldErrors[field]}
+      </p>
+    ) : null
+
+  const invalid = (field: ConsultationField): true | undefined => (fieldErrors[field] ? true : undefined)
 
   return (
     <form
+      ref={formRef}
       className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8 lg:p-10"
       onSubmit={handleSubmit}
       aria-describedby="consult-form-note"
+      aria-busy={sending || undefined}
     >
+      <p id="consult-form-note" className="mb-6 text-sm leading-6 text-muted-foreground">
+        Name, phone and best time to call are required. Your details are used only to contact you
+        about your consultation.
+      </p>
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="space-y-2">
           <label className="text-sm font-semibold" htmlFor="consult-name">
             Name
           </label>
-          <Input id="consult-name" name="name" autoComplete="name" required />
+          <Input
+            id="consult-name"
+            name="name"
+            autoComplete="name"
+            maxLength={80}
+            required
+            aria-invalid={invalid("name")}
+            aria-describedby={describedBy("name")}
+          />
+          {fieldError("name")}
         </div>
         <div className="space-y-2">
           <label className="text-sm font-semibold" htmlFor="consult-phone">
             Phone
           </label>
-          <Input id="consult-phone" name="phone" type="tel" autoComplete="tel" required />
+          <Input
+            id="consult-phone"
+            name="phone"
+            type="tel"
+            autoComplete="tel"
+            maxLength={64}
+            required
+            aria-invalid={invalid("phone")}
+            aria-describedby={describedBy("phone")}
+          />
+          {fieldError("phone")}
         </div>
       </div>
       <div className="mt-5 space-y-2">
         <label className="text-sm font-semibold" htmlFor="consult-email">
-          Email
+          Email <span className="font-normal text-muted-foreground">(optional)</span>
         </label>
-        <Input id="consult-email" name="email" type="email" autoComplete="email" />
+        <Input
+          id="consult-email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          maxLength={254}
+          aria-invalid={invalid("email")}
+          aria-describedby={describedBy("email")}
+        />
+        {fieldError("email")}
       </div>
       <div className="mt-5 space-y-2">
         <label className="text-sm font-semibold" htmlFor="consult-time">
@@ -257,39 +516,116 @@ function ConsultationForm(): React.JSX.Element {
         <select
           id="consult-time"
           name="best_time"
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          required
+          aria-invalid={invalid("best_time")}
+          aria-describedby={describedBy("best_time")}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive"
         >
-          <option>Morning</option>
-          <option>Midday</option>
-          <option>Afternoon</option>
-          <option>Evening</option>
+          {BEST_TIMES.map((time) => (
+            <option key={time} value={time}>
+              {time}
+            </option>
+          ))}
         </select>
+        {fieldError("best_time")}
       </div>
       <div className="mt-5 space-y-2">
         <label className="text-sm font-semibold" htmlFor="consult-message">
-          What's going on?
+          What's going on? <span className="font-normal text-muted-foreground">(optional)</span>
         </label>
-        <Textarea id="consult-message" name="message" rows={4} />
+        <Textarea
+          id="consult-message"
+          name="message"
+          rows={4}
+          maxLength={5000}
+          aria-invalid={invalid("message")}
+          aria-describedby={describedBy("message")}
+        />
+        {fieldError("message")}
       </div>
+
+      <div className="mt-6 space-y-2">
+        <div className="flex items-start gap-3">
+          <input
+            id="consult-consent"
+            name="consent"
+            type="checkbox"
+            required
+            checked={consent}
+            onChange={(event) => setConsent(event.target.checked)}
+            aria-invalid={invalid("consent")}
+            aria-describedby={describedBy("consent", "consult-consent-privacy")}
+            className="mt-1 size-4 shrink-0 cursor-pointer accent-primary outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+          <label htmlFor="consult-consent" className="text-sm leading-6">
+            I agree to share this information with Forge Performance Therapy for the purpose of
+            contacting me about my consultation only. Forge will never sell or share the information
+            I submit.
+          </label>
+        </div>
+        <p id="consult-consent-privacy" className="pl-7 text-xs leading-5 text-muted-foreground">
+          Read the{" "}
+          <a
+            className="font-semibold text-foreground underline decoration-forge-gold decoration-2 underline-offset-4"
+            href="/privacy"
+          >
+            privacy notice
+          </a>
+          , including how the Cloudflare security check works.
+        </p>
+        {fieldError("consent")}
+      </div>
+
+      {apiConfigured ? (
+        <ConsultationCaptcha
+          className="mt-6"
+          siteKey={turnstileSiteKey}
+          resetKey={captchaResetKey}
+          onTokenChange={handleTokenChange}
+          onAvailabilityChange={setCaptchaAvailable}
+          invalid={Boolean(fieldErrors.captcha_token)}
+        />
+      ) : (
+        <p className="mt-6 text-sm leading-6 text-destructive" role="status">
+          Online consultation requests are unavailable right now. Please call{" "}
+          <a className="font-semibold text-foreground underline underline-offset-4" href="tel:+16125550148">
+            (612) 555-0148
+          </a>{" "}
+          or email{" "}
+          <a
+            className="break-all font-semibold text-foreground underline underline-offset-4"
+            href="mailto:hello@forgeperformance.com"
+          >
+            hello@forgeperformance.com
+          </a>{" "}
+          to book your free consultation.
+        </p>
+      )}
+      {fieldError("captcha_token")}
+
       <button
         className={cn(buttonVariants({ variant: "outline", size: "lg" }), "mt-6 w-full")}
         type="submit"
+        disabled={sending || !canSubmit}
       >
-        Request my free consult
+        {sending ? "Sending…" : "Request my free consult"}
       </button>
-      <p id="consult-form-note" className="mt-3 text-xs leading-5 text-muted-foreground">
-        This form is for planning only and does not send your information. Call or email Forge to
-        request your consultation.
-      </p>
-      {showNotice ? (
-        <Alert className="mt-5" role="status">
-          <AlertTitle>Your details have not been sent</AlertTitle>
-          <AlertDescription>
-            Please call (612) 555-0148 or email hello@forgeperformance.com to request your free
-            consultation.
-          </AlertDescription>
-        </Alert>
-      ) : null}
+
+      <div role="status" aria-live="polite" className="mt-5 empty:hidden">
+        {status.state === "success" ? (
+          <Alert role="none">
+            <AlertTitle>Request received</AlertTitle>
+            <AlertDescription>{status.message}</AlertDescription>
+          </Alert>
+        ) : status.state === "error" ? (
+          <Alert role="none" variant="destructive">
+            <AlertTitle>Your request was not sent</AlertTitle>
+            <AlertDescription>{status.message}</AlertDescription>
+          </Alert>
+        ) : status.state === "sending" ? (
+          <p className="text-sm text-muted-foreground">{status.message}</p>
+        ) : null}
+      </div>
     </form>
   )
 }
@@ -297,6 +633,8 @@ function ConsultationForm(): React.JSX.Element {
 export function HomeSections({
   posts,
   resourcesUnavailable,
+  apiUrl,
+  turnstileSiteKey,
 }: HomeSectionsProps): React.JSX.Element {
   const latestPosts = posts.slice(0, 3)
 
@@ -567,7 +905,7 @@ export function HomeSections({
               </div>
             </div>
           </div>
-          <ConsultationForm />
+          <ConsultationForm apiUrl={apiUrl} turnstileSiteKey={turnstileSiteKey} />
         </div>
       </section>
     </>

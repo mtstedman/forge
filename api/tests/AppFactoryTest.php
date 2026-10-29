@@ -5,8 +5,16 @@ declare(strict_types=1);
 namespace Forge\Api\Tests;
 
 use Forge\Api\AppFactory;
+use Forge\Api\Captcha\TurnstileVerifier;
 use Forge\Api\Config;
 use Forge\Api\Database;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use RuntimeException;
@@ -188,5 +196,163 @@ final class AppFactoryTest extends TestCase
         self::assertSame('dev', $config->get('APP_ENV'));
         self::assertSame('api/public/uploads', $config->get('UPLOAD_DIR', 'api/public/uploads'));
         self::assertNull($config->get('MEDIA_BASE_URL'));
+    }
+
+    private const TURNSTILE_SECRET = 'test-secret-value';
+    private const TURNSTILE_TOKEN = 'client-token-value';
+
+    /** @var array<int, array<string, mixed>> */
+    private array $turnstileHistory = [];
+
+    /**
+     * @param list<mixed> $queue
+     * @param array<string, string> $config
+     */
+    private function turnstile(array $queue, ?array $config = null): TurnstileVerifier
+    {
+        $this->turnstileHistory = [];
+        $stack = HandlerStack::create(new MockHandler($queue));
+        $stack->push(Middleware::history($this->turnstileHistory));
+
+        return new TurnstileVerifier(
+            Config::fromArray($config ?? [
+                'TURNSTILE_SECRET_KEY' => self::TURNSTILE_SECRET,
+                'TURNSTILE_EXPECTED_HOSTNAME' => 'ancoratiming.com',
+            ]),
+            new Client(['handler' => $stack]),
+        );
+    }
+
+    /** @param array<string, mixed> $payload */
+    private static function providerResponse(array $payload, int $status = 200): Response
+    {
+        return new Response($status, ['Content-Type' => 'application/json'], json_encode($payload, JSON_THROW_ON_ERROR));
+    }
+
+    private function assertUnavailable(TurnstileVerifier $verifier, string $token = self::TURNSTILE_TOKEN): void
+    {
+        try {
+            $verifier($token);
+            self::fail('Expected RuntimeException.');
+        } catch (RuntimeException $exception) {
+            self::assertStringNotContainsString(self::TURNSTILE_SECRET, $exception->getMessage());
+            self::assertStringNotContainsString(self::TURNSTILE_TOKEN, $exception->getMessage());
+            self::assertStringNotContainsString('challenges.cloudflare.com', $exception->getMessage());
+            self::assertNull($exception->getPrevious());
+        }
+    }
+
+    public function testTurnstileAcceptsSuccessfulVerificationAndSendsOnlySecretAndToken(): void
+    {
+        $verifier = $this->turnstile([self::providerResponse([
+            'success' => true,
+            'hostname' => 'ancoratiming.com',
+            'action' => 'consultation',
+            'error-codes' => [],
+        ])]);
+
+        self::assertTrue($verifier(self::TURNSTILE_TOKEN));
+        self::assertCount(1, $this->turnstileHistory);
+
+        $request = $this->turnstileHistory[0]['request'];
+        self::assertSame('POST', $request->getMethod());
+        self::assertSame('https://challenges.cloudflare.com/turnstile/v0/siteverify', (string) $request->getUri());
+        parse_str((string) $request->getBody(), $fields);
+        self::assertSame(['secret' => self::TURNSTILE_SECRET, 'response' => self::TURNSTILE_TOKEN], $fields);
+
+        $options = $this->turnstileHistory[0]['options'];
+        self::assertSame(3.0, $options['connect_timeout']);
+        self::assertSame(5.0, $options['timeout']);
+    }
+
+    public function testTurnstileRejectsInvalidExpiredAndReplayedTokens(): void
+    {
+        foreach ([['invalid-input-response'], ['timeout-or-duplicate'], []] as $codes) {
+            $verifier = $this->turnstile([self::providerResponse(['success' => false, 'error-codes' => $codes])]);
+            self::assertFalse($verifier(self::TURNSTILE_TOKEN));
+        }
+    }
+
+    public function testTurnstileRejectsEmptyTokenWithoutProviderRequest(): void
+    {
+        $verifier = $this->turnstile([]);
+
+        self::assertFalse($verifier(''));
+        self::assertCount(0, $this->turnstileHistory);
+    }
+
+    public function testTurnstileRejectsWrongHostname(): void
+    {
+        $verifier = $this->turnstile([self::providerResponse([
+            'success' => true,
+            'hostname' => 'evil.example',
+            'action' => 'consultation',
+        ])]);
+
+        self::assertFalse($verifier(self::TURNSTILE_TOKEN));
+    }
+
+    public function testTurnstileRejectsWrongOrMissingAction(): void
+    {
+        $verifier = $this->turnstile([self::providerResponse([
+            'success' => true,
+            'hostname' => 'ancoratiming.com',
+            'action' => 'login',
+        ])]);
+        self::assertFalse($verifier(self::TURNSTILE_TOKEN));
+
+        $verifier = $this->turnstile([self::providerResponse([
+            'success' => true,
+            'hostname' => 'ancoratiming.com',
+        ])]);
+        self::assertFalse($verifier(self::TURNSTILE_TOKEN));
+    }
+
+    public function testTurnstileMissingConfigurationFailsClosedWithoutRequest(): void
+    {
+        $this->assertUnavailable($this->turnstile([], []));
+        $this->assertUnavailable($this->turnstile([], ['TURNSTILE_SECRET_KEY' => self::TURNSTILE_SECRET]));
+        $this->assertUnavailable($this->turnstile([], ['TURNSTILE_EXPECTED_HOSTNAME' => 'ancoratiming.com']));
+        self::assertCount(0, $this->turnstileHistory);
+    }
+
+    public function testTurnstileConstructionNeedsNoConfiguration(): void
+    {
+        $verifier = new TurnstileVerifier(Config::fromArray([]));
+
+        $this->assertUnavailable($verifier);
+    }
+
+    public function testTurnstileTransportFailureFailsClosed(): void
+    {
+        $verifier = $this->turnstile([
+            new ConnectException(
+                'cURL error 28 secret=' . self::TURNSTILE_SECRET,
+                new Request('POST', 'https://challenges.cloudflare.com/turnstile/v0/siteverify'),
+            ),
+        ]);
+
+        $this->assertUnavailable($verifier);
+    }
+
+    public function testTurnstileHttpErrorFailsClosed(): void
+    {
+        $this->assertUnavailable($this->turnstile([new Response(500, [], 'upstream failure')]));
+        $this->assertUnavailable($this->turnstile([self::providerResponse(['success' => true], 403)]));
+    }
+
+    public function testTurnstileProviderConfigurationErrorFailsClosed(): void
+    {
+        $this->assertUnavailable($this->turnstile([
+            self::providerResponse(['success' => false, 'error-codes' => ['invalid-input-secret']]),
+        ]));
+    }
+
+    public function testTurnstileMalformedResponseFailsClosed(): void
+    {
+        $this->assertUnavailable($this->turnstile([new Response(200, [], 'not json')]));
+        $this->assertUnavailable($this->turnstile([new Response(200, [], '"success"')]));
+        $this->assertUnavailable($this->turnstile([self::providerResponse(['hostname' => 'ancoratiming.com'])]));
+        $this->assertUnavailable($this->turnstile([self::providerResponse(['success' => 'true'])]));
     }
 }
