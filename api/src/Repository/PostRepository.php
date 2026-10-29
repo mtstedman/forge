@@ -8,6 +8,7 @@ use Forge\Api\Markdown;
 use JsonException;
 use PDO;
 use RuntimeException;
+use Throwable;
 
 final class PostRepository
 {
@@ -71,46 +72,67 @@ final class PostRepository
         return $this->hydrateOne($statement->fetch());
     }
 
-    /** @param array<string, mixed> $data */
+    /**
+     * Categories and tags are normalized (trimmed, nonempty, unique, in selection order).
+     * Explicit `categories` wins over the legacy scalar `category`, which maps to a
+     * singleton selection (or none when blank). The post and any new vocabulary entries
+     * are saved atomically.
+     *
+     * @param array<string, mixed> $data
+     */
     public function create(array $data): int
     {
+        [$categories, $category] = self::resolveCategories($data, null);
+        $tags = self::normalizeTerms($data['tags'] ?? []);
         $now = self::now();
         $bodyMarkdown = (string) ($data['body_markdown'] ?? '');
-        $statement = $this->pdo->prepare(<<<'SQL'
-            INSERT INTO posts (
-                slug, title, excerpt, body_markdown, body_html, category, tags, faq,
-                meta_title, meta_description, cover_media_id, author_name, status,
-                comments_enabled, published_at, created_at, updated_at
-            ) VALUES (
-                :slug, :title, :excerpt, :body_markdown, :body_html, :category, :tags, :faq,
-                :meta_title, :meta_description, :cover_media_id, :author_name, :status,
-                :comments_enabled, :published_at, :created_at, :updated_at
-            )
-            SQL);
-        $statement->execute([
-            'slug' => (string) ($data['slug'] ?? ''),
-            'title' => (string) ($data['title'] ?? ''),
-            'excerpt' => (string) ($data['excerpt'] ?? ''),
-            'body_markdown' => $bodyMarkdown,
-            'body_html' => Markdown::toHtml($bodyMarkdown),
-            'category' => (string) ($data['category'] ?? ''),
-            'tags' => self::encodeArray($data['tags'] ?? []),
-            'faq' => self::encodeArray($data['faq'] ?? []),
-            'meta_title' => $data['meta_title'] ?? null,
-            'meta_description' => $data['meta_description'] ?? null,
-            'cover_media_id' => $data['cover_media_id'] ?? null,
-            'author_name' => (string) ($data['author_name'] ?? ''),
-            'status' => (string) ($data['status'] ?? 'draft'),
-            'comments_enabled' => (int) ($data['comments_enabled'] ?? 0),
-            'published_at' => $data['published_at'] ?? null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
 
-        return (int) $this->pdo->lastInsertId();
+        return $this->transactional(function () use ($data, $categories, $category, $tags, $now, $bodyMarkdown): int {
+            $statement = $this->pdo->prepare(<<<'SQL'
+                INSERT INTO posts (
+                    slug, title, excerpt, body_markdown, body_html, category, categories, tags, faq,
+                    meta_title, meta_description, cover_media_id, author_name, status,
+                    comments_enabled, published_at, created_at, updated_at
+                ) VALUES (
+                    :slug, :title, :excerpt, :body_markdown, :body_html, :category, :categories, :tags, :faq,
+                    :meta_title, :meta_description, :cover_media_id, :author_name, :status,
+                    :comments_enabled, :published_at, :created_at, :updated_at
+                )
+                SQL);
+            $statement->execute([
+                'slug' => (string) ($data['slug'] ?? ''),
+                'title' => (string) ($data['title'] ?? ''),
+                'excerpt' => (string) ($data['excerpt'] ?? ''),
+                'body_markdown' => $bodyMarkdown,
+                'body_html' => Markdown::toHtml($bodyMarkdown),
+                'category' => $category,
+                'categories' => self::encodeArray($categories),
+                'tags' => self::encodeArray($tags),
+                'faq' => self::encodeArray($data['faq'] ?? []),
+                'meta_title' => $data['meta_title'] ?? null,
+                'meta_description' => $data['meta_description'] ?? null,
+                'cover_media_id' => $data['cover_media_id'] ?? null,
+                'author_name' => (string) ($data['author_name'] ?? ''),
+                'status' => (string) ($data['status'] ?? 'draft'),
+                'comments_enabled' => (int) ($data['comments_enabled'] ?? 0),
+                'published_at' => $data['published_at'] ?? null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $id = (int) $this->pdo->lastInsertId();
+
+            $this->rememberTerms('category', $categories);
+            $this->rememberTerms('tag', $tags);
+
+            return $id;
+        });
     }
 
-    /** @param array<string, mixed> $data */
+    /**
+     * Omitted `categories`/`category` and `tags` keep the current selections.
+     *
+     * @param array<string, mixed> $data
+     */
     public function update(int $id, array $data): void
     {
         $current = $this->find($id);
@@ -118,47 +140,75 @@ final class PostRepository
             return;
         }
 
+        [$categories, $category] = self::resolveCategories($data, $current);
+        $tags = array_key_exists('tags', $data) ? self::normalizeTerms($data['tags']) : $current['tags'];
         $post = array_replace($current, $data);
         $bodyMarkdown = (string) ($post['body_markdown'] ?? '');
-        $statement = $this->pdo->prepare(<<<'SQL'
-            UPDATE posts SET
-                slug = :slug,
-                title = :title,
-                excerpt = :excerpt,
-                body_markdown = :body_markdown,
-                body_html = :body_html,
-                category = :category,
-                tags = :tags,
-                faq = :faq,
-                meta_title = :meta_title,
-                meta_description = :meta_description,
-                cover_media_id = :cover_media_id,
-                author_name = :author_name,
-                status = :status,
-                comments_enabled = :comments_enabled,
-                published_at = :published_at,
-                updated_at = :updated_at
-            WHERE id = :id
-            SQL);
-        $statement->execute([
-            'slug' => (string) $post['slug'],
-            'title' => (string) $post['title'],
-            'excerpt' => (string) $post['excerpt'],
-            'body_markdown' => $bodyMarkdown,
-            'body_html' => Markdown::toHtml($bodyMarkdown),
-            'category' => (string) $post['category'],
-            'tags' => self::encodeArray($post['tags'] ?? []),
-            'faq' => self::encodeArray($post['faq'] ?? []),
-            'meta_title' => $post['meta_title'] ?? null,
-            'meta_description' => $post['meta_description'] ?? null,
-            'cover_media_id' => $post['cover_media_id'] ?? null,
-            'author_name' => (string) $post['author_name'],
-            'status' => (string) $post['status'],
-            'comments_enabled' => (int) $post['comments_enabled'],
-            'published_at' => $post['published_at'] ?? null,
-            'updated_at' => self::now(),
-            'id' => $id,
-        ]);
+
+        $this->transactional(function () use ($id, $post, $categories, $category, $tags, $bodyMarkdown): void {
+            $statement = $this->pdo->prepare(<<<'SQL'
+                UPDATE posts SET
+                    slug = :slug,
+                    title = :title,
+                    excerpt = :excerpt,
+                    body_markdown = :body_markdown,
+                    body_html = :body_html,
+                    category = :category,
+                    categories = :categories,
+                    tags = :tags,
+                    faq = :faq,
+                    meta_title = :meta_title,
+                    meta_description = :meta_description,
+                    cover_media_id = :cover_media_id,
+                    author_name = :author_name,
+                    status = :status,
+                    comments_enabled = :comments_enabled,
+                    published_at = :published_at,
+                    updated_at = :updated_at
+                WHERE id = :id
+                SQL);
+            $statement->execute([
+                'slug' => (string) $post['slug'],
+                'title' => (string) $post['title'],
+                'excerpt' => (string) $post['excerpt'],
+                'body_markdown' => $bodyMarkdown,
+                'body_html' => Markdown::toHtml($bodyMarkdown),
+                'category' => $category,
+                'categories' => self::encodeArray($categories),
+                'tags' => self::encodeArray($tags),
+                'faq' => self::encodeArray($post['faq'] ?? []),
+                'meta_title' => $post['meta_title'] ?? null,
+                'meta_description' => $post['meta_description'] ?? null,
+                'cover_media_id' => $post['cover_media_id'] ?? null,
+                'author_name' => (string) $post['author_name'],
+                'status' => (string) $post['status'],
+                'comments_enabled' => (int) $post['comments_enabled'],
+                'published_at' => $post['published_at'] ?? null,
+                'updated_at' => self::now(),
+                'id' => $id,
+            ]);
+
+            $this->rememberTerms('category', $categories);
+            $this->rememberTerms('tag', $tags);
+        });
+    }
+
+    /**
+     * Reusable vocabulary in deterministic alphabetical order.
+     *
+     * @return array{categories: list<string>, tags: list<string>}
+     */
+    public function taxonomy(): array
+    {
+        $statement = $this->pdo->query(
+            'SELECT kind, name FROM taxonomy_terms ORDER BY name COLLATE NOCASE ASC, name ASC, id ASC'
+        );
+        $taxonomy = ['categories' => [], 'tags' => []];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $taxonomy[$row['kind'] === 'category' ? 'categories' : 'tags'][] = (string) $row['name'];
+        }
+
+        return $taxonomy;
     }
 
     public function delete(int $id): void
@@ -218,6 +268,7 @@ final class PostRepository
         $row['id'] = (int) $row['id'];
         $row['cover_media_id'] = $row['cover_media_id'] === null ? null : (int) $row['cover_media_id'];
         $row['comments_enabled'] = (int) $row['comments_enabled'];
+        $row['categories'] = self::decodeArray((string) ($row['categories'] ?? '[]'));
         $row['tags'] = self::decodeArray((string) $row['tags']);
         $row['faq'] = self::decodeArray((string) $row['faq']);
 
@@ -251,6 +302,91 @@ final class PostRepository
         } catch (JsonException $exception) {
             throw new RuntimeException('Post tags or FAQ could not be encoded.', 0, $exception);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param array<string, mixed>|null $current
+     * @return array{0: list<string>, 1: string}
+     */
+    private static function resolveCategories(array $data, ?array $current): array
+    {
+        if (array_key_exists('categories', $data)) {
+            $categories = self::normalizeTerms($data['categories']);
+
+            return [$categories, $categories[0] ?? ''];
+        }
+        if (array_key_exists('category', $data)) {
+            $categories = self::normalizeTerms([(string) ($data['category'] ?? '')]);
+
+            return [$categories, $categories[0] ?? ''];
+        }
+        if ($current !== null) {
+            return [array_values($current['categories'] ?? []), (string) ($current['category'] ?? '')];
+        }
+
+        return [[], ''];
+    }
+
+    /** @return list<string> */
+    private static function normalizeTerms(mixed $values): array
+    {
+        if (!is_array($values)) {
+            throw new RuntimeException('Post categories and tags must be arrays.');
+        }
+
+        $terms = [];
+        foreach ($values as $value) {
+            if (!is_string($value)) {
+                throw new RuntimeException('Post categories and tags must contain only strings.');
+            }
+            $term = trim($value);
+            if ($term !== '' && !in_array($term, $terms, true)) {
+                $terms[] = $term;
+            }
+        }
+
+        return $terms;
+    }
+
+    /** @param array<mixed> $terms */
+    private function rememberTerms(string $kind, array $terms): void
+    {
+        $statement = $this->pdo->prepare(
+            'INSERT OR IGNORE INTO taxonomy_terms (kind, name, created_at) VALUES (:kind, :name, :created_at)'
+        );
+        $now = self::now();
+        foreach ($terms as $term) {
+            if (!is_string($term) || trim($term) === '') {
+                continue;
+            }
+            $statement->execute(['kind' => $kind, 'name' => trim($term), 'created_at' => $now]);
+        }
+    }
+
+    /**
+     * @template T
+     * @param callable(): T $callback
+     * @return T
+     */
+    private function transactional(callable $callback): mixed
+    {
+        if ($this->pdo->inTransaction()) {
+            return $callback();
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $result = $callback();
+            $this->pdo->commit();
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        }
+
+        return $result;
     }
 
     private static function now(): string

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS posts (
     body_markdown TEXT NOT NULL DEFAULT '',
     body_html TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT '',
+    categories TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(categories) AND json_type(categories) = 'array'),
     tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags) AND json_type(tags) = 'array'),
     faq TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(faq) AND json_type(faq) = 'array'),
     meta_title TEXT,
@@ -44,6 +45,16 @@ CREATE TABLE IF NOT EXISTS comments (
     user_agent TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     moderated_at TEXT
+);
+
+-- Reusable admin vocabulary. Entries are additive: they persist with post saves
+-- and stay available after a post deselects them or is deleted.
+CREATE TABLE IF NOT EXISTS taxonomy_terms (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('category', 'tag')),
+    name TEXT NOT NULL CHECK (name <> ''),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (kind, name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_posts_status_published_at

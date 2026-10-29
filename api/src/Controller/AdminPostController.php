@@ -51,6 +51,11 @@ final class AdminPostController
         return $this->json($response, ['data' => $this->posts->find($id)], 201);
     }
 
+    public function taxonomy(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        return $this->json($response, ['data' => $this->posts->taxonomy()]);
+    }
+
     /** @param array<string, string> $args */
     public function show(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
@@ -155,10 +160,23 @@ final class AdminPostController
                 $fields[$field] = 'Must be a string.';
             }
         }
-        foreach (['tags', 'faq'] as $field) {
-            if (array_key_exists($field, $input) && !is_array($input[$field])) {
-                $fields[$field] = 'Must be an array.';
+        foreach (['categories', 'tags'] as $field) {
+            if (!array_key_exists($field, $input)) {
+                continue;
             }
+            if (!is_array($input[$field]) || !array_is_list($input[$field])) {
+                $fields[$field] = 'Must be an array.';
+                continue;
+            }
+            foreach ($input[$field] as $value) {
+                if (!is_string($value)) {
+                    $fields[$field] = 'Must be an array of strings.';
+                    break;
+                }
+            }
+        }
+        if (array_key_exists('faq', $input) && !is_array($input['faq'])) {
+            $fields['faq'] = 'Must be an array.';
         }
         if (array_key_exists('comments_enabled', $input) && $this->booleanValue($input['comments_enabled']) === null) {
             $fields['comments_enabled'] = 'Must be a boolean.';
@@ -192,7 +210,7 @@ final class AdminPostController
                 $data[$field] = $input[$field];
             }
         }
-        foreach (['tags', 'faq', 'cover_media_id'] as $field) {
+        foreach (['categories', 'tags', 'faq', 'cover_media_id'] as $field) {
             if (array_key_exists($field, $input)) {
                 $data[$field] = $input[$field];
             }

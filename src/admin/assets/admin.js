@@ -6,7 +6,27 @@
     posts: [],
     media: [],
     commentPage: 1,
-    comments: []
+    comments: [],
+    taxonomy: {
+      categories: [],
+      tags: []
+    }
+  };
+
+  const taxonomyControls = {};
+  const taxonomyDefinitions = {
+    categories: {
+      inputId: 'post-category',
+      chipsId: 'post-category-chips',
+      suggestionsId: 'post-category-suggestions',
+      itemLabel: 'category'
+    },
+    tags: {
+      inputId: 'post-tags',
+      chipsId: 'post-tags-chips',
+      suggestionsId: 'post-tags-suggestions',
+      itemLabel: 'tag'
+    }
   };
 
   const byId = (id) => document.getElementById(id);
@@ -61,6 +81,210 @@
     if (!value) return 'Not yet';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+  }
+
+  function uniqueTaxonomyValues(values) {
+    const unique = [];
+    if (!Array.isArray(values)) return unique;
+    values.forEach((value) => {
+      if (typeof value !== 'string') return;
+      const trimmed = value.trim();
+      if (trimmed && !unique.includes(trimmed)) unique.push(trimmed);
+    });
+    return unique;
+  }
+
+  function hideTaxonomySuggestions(control) {
+    control.suggestions = [];
+    control.activeIndex = -1;
+    control.list.hidden = true;
+    control.input.setAttribute('aria-expanded', 'false');
+    control.input.removeAttribute('aria-activedescendant');
+  }
+
+  function renderTaxonomyChips(control) {
+    control.chips.replaceChildren();
+    control.selected.forEach((value) => {
+      const chip = document.createElement('span');
+      chip.className = 'taxonomy-chip';
+
+      const text = document.createElement('span');
+      text.textContent = value;
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'taxonomy-chip-remove';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Remove ${control.itemLabel} ${value}`);
+      remove.addEventListener('click', () => {
+        control.selected = control.selected.filter((selected) => selected !== value);
+        renderTaxonomyChips(control);
+        control.input.focus();
+        renderTaxonomySuggestions(control);
+      });
+
+      chip.append(text, remove);
+      control.chips.appendChild(chip);
+    });
+  }
+
+  function renderTaxonomySuggestions(control) {
+    if (document.activeElement !== control.input) {
+      hideTaxonomySuggestions(control);
+      return;
+    }
+
+    const query = control.input.value.trim().toLocaleLowerCase();
+    control.suggestions = state.taxonomy[control.kind].filter((value) => (
+      !control.selected.includes(value) && value.toLocaleLowerCase().includes(query)
+    ));
+
+    if (control.suggestions.length === 0) {
+      hideTaxonomySuggestions(control);
+      return;
+    }
+
+    if (control.activeIndex < 0 || control.activeIndex >= control.suggestions.length) {
+      control.activeIndex = 0;
+    }
+    control.list.replaceChildren();
+    control.suggestions.forEach((value, index) => {
+      const option = document.createElement('div');
+      option.id = `${control.suggestionsId}-option-${index}`;
+      option.className = 'taxonomy-suggestion';
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', index === control.activeIndex ? 'true' : 'false');
+      option.textContent = value;
+      option.addEventListener('mouseenter', () => {
+        control.activeIndex = index;
+        Array.from(control.list.children).forEach((item, itemIndex) => {
+          item.setAttribute('aria-selected', itemIndex === index ? 'true' : 'false');
+        });
+        control.input.setAttribute('aria-activedescendant', option.id);
+      });
+      option.addEventListener('mousedown', (event) => event.preventDefault());
+      option.addEventListener('click', () => addTaxonomyValue(control, value));
+      control.list.appendChild(option);
+    });
+    control.list.hidden = false;
+    control.input.setAttribute('aria-expanded', 'true');
+    control.input.setAttribute('aria-activedescendant', `${control.suggestionsId}-option-${control.activeIndex}`);
+  }
+
+  function addTaxonomyValue(control, value) {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed && !control.selected.includes(trimmed)) control.selected.push(trimmed);
+    control.input.value = '';
+    control.activeIndex = -1;
+    renderTaxonomyChips(control);
+    renderTaxonomySuggestions(control);
+  }
+
+  function commitTaxonomyDraft(control) {
+    control.input.value.split(',').forEach((value) => {
+      const trimmed = value.trim();
+      if (trimmed && !control.selected.includes(trimmed)) control.selected.push(trimmed);
+    });
+    control.input.value = '';
+    control.activeIndex = -1;
+    renderTaxonomyChips(control);
+    hideTaxonomySuggestions(control);
+  }
+
+  function handleTaxonomyInput(control) {
+    if (control.input.value.includes(',')) {
+      const values = control.input.value.split(',');
+      const remainder = control.input.value.endsWith(',') ? '' : values.pop();
+      values.forEach((value) => {
+        const trimmed = value.trim();
+        if (trimmed && !control.selected.includes(trimmed)) control.selected.push(trimmed);
+      });
+      control.input.value = remainder;
+      renderTaxonomyChips(control);
+    }
+    control.activeIndex = 0;
+    renderTaxonomySuggestions(control);
+  }
+
+  function handleTaxonomyKeydown(control, event) {
+    if (event.key === ',') {
+      event.preventDefault();
+      commitTaxonomyDraft(control);
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (control.list.hidden) renderTaxonomySuggestions(control);
+      if (control.suggestions.length === 0) return;
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      control.activeIndex = (control.activeIndex + direction + control.suggestions.length) % control.suggestions.length;
+      renderTaxonomySuggestions(control);
+      return;
+    }
+    if (event.key === 'Enter' && !control.list.hidden && control.activeIndex >= 0) {
+      event.preventDefault();
+      addTaxonomyValue(control, control.suggestions[control.activeIndex]);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideTaxonomySuggestions(control);
+    }
+  }
+
+  function initializeTaxonomyControls() {
+    if (Object.keys(taxonomyControls).length > 0) return;
+    Object.entries(taxonomyDefinitions).forEach(([kind, definition]) => {
+      const control = {
+        ...definition,
+        kind,
+        input: byId(definition.inputId),
+        chips: byId(definition.chipsId),
+        list: byId(definition.suggestionsId),
+        selected: [],
+        suggestions: [],
+        activeIndex: -1
+      };
+      taxonomyControls[kind] = control;
+      control.input.addEventListener('input', () => handleTaxonomyInput(control));
+      control.input.addEventListener('focus', () => renderTaxonomySuggestions(control));
+      control.input.addEventListener('blur', () => hideTaxonomySuggestions(control));
+      control.input.addEventListener('keydown', (event) => handleTaxonomyKeydown(control, event));
+      control.input.addEventListener('paste', (event) => {
+        const text = event.clipboardData ? event.clipboardData.getData('text') : '';
+        if (!text.includes(',')) return;
+        event.preventDefault();
+        const start = control.input.selectionStart;
+        const end = control.input.selectionEnd;
+        control.input.value = `${control.input.value.slice(0, start)}${text}${control.input.value.slice(end)}`;
+        commitTaxonomyDraft(control);
+      });
+    });
+  }
+
+  function setTaxonomySelection(kind, values) {
+    const control = taxonomyControls[kind];
+    control.selected = uniqueTaxonomyValues(values);
+    control.input.value = '';
+    renderTaxonomyChips(control);
+    hideTaxonomySuggestions(control);
+  }
+
+  function mergeTaxonomyVocabulary(kind, values) {
+    state.taxonomy[kind] = uniqueTaxonomyValues([...state.taxonomy[kind], ...uniqueTaxonomyValues(values)])
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+  }
+
+  async function loadTaxonomy() {
+    const payload = await request('/admin/taxonomy');
+    const taxonomy = payload.data && typeof payload.data === 'object' ? payload.data : {};
+    state.taxonomy.categories = uniqueTaxonomyValues(taxonomy.categories);
+    state.taxonomy.tags = uniqueTaxonomyValues(taxonomy.tags);
+    Object.values(taxonomyControls).forEach((control) => renderTaxonomySuggestions(control));
+  }
+
+  function commitTaxonomyDrafts() {
+    Object.values(taxonomyControls).forEach(commitTaxonomyDraft);
   }
 
   function switchSection(section) {
@@ -121,6 +345,8 @@
     byId('post-form').reset();
     byId('post-id').value = '';
     byId('post-cover').value = '';
+    setTaxonomySelection('categories', []);
+    setTaxonomySelection('tags', []);
     byId('faq-list').replaceChildren();
     byId('post-errors').hidden = true;
     byId('post-errors').replaceChildren();
@@ -137,8 +363,8 @@
     byId('post-slug').value = post.slug || '';
     byId('post-excerpt').value = post.excerpt || '';
     byId('post-body').value = post.body_markdown || '';
-    byId('post-category').value = post.category || '';
-    byId('post-tags').value = Array.isArray(post.tags) ? post.tags.join(', ') : '';
+    setTaxonomySelection('categories', Array.isArray(post.categories) ? post.categories : (post.category ? [post.category] : []));
+    setTaxonomySelection('tags', Array.isArray(post.tags) ? post.tags : []);
     byId('post-meta-title').value = post.meta_title || '';
     byId('post-meta-description').value = post.meta_description || '';
     byId('post-cover').value = post.cover_media_id == null ? '' : String(post.cover_media_id);
@@ -183,7 +409,7 @@
   }
 
   function postData() {
-    const tags = byId('post-tags').value.split(',').map((tag) => tag.trim()).filter(Boolean);
+    commitTaxonomyDrafts();
     const faq = Array.from(document.querySelectorAll('.faq-row')).map((row) => ({
       question: row.querySelector('.faq-question').value.trim(),
       answer: row.querySelector('.faq-answer').value.trim()
@@ -195,8 +421,8 @@
       slug: byId('post-slug').value.trim(),
       excerpt: byId('post-excerpt').value,
       body_markdown: byId('post-body').value,
-      category: byId('post-category').value.trim(),
-      tags,
+      categories: taxonomyControls.categories.selected.slice(),
+      tags: taxonomyControls.tags.selected.slice(),
       faq,
       meta_title: byId('post-meta-title').value.trim() || null,
       meta_description: byId('post-meta-description').value.trim() || null,
@@ -210,9 +436,12 @@
     const path = id ? `/admin/posts/${encodeURIComponent(id)}` : '/admin/posts';
     const method = id ? 'PUT' : 'POST';
     const payload = await request(path, { method, body: JSON.stringify(postData()) });
-    fillPostForm(payload.data || {});
+    const post = payload.data || {};
+    fillPostForm(post);
+    mergeTaxonomyVocabulary('categories', post.categories);
+    mergeTaxonomyVocabulary('tags', post.tags);
     await loadPosts();
-    return payload.data;
+    return post;
   }
 
   async function submitPost(event) {
@@ -447,6 +676,7 @@
   }
 
   function bindEvents() {
+    initializeTaxonomyControls();
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => switchSection(tab.dataset.section));
     });
@@ -478,7 +708,7 @@
     bindEvents();
     resetPostForm();
     try {
-      await Promise.all([loadPosts(), loadMedia(), loadComments()]);
+      await Promise.all([loadPosts(), loadMedia(), loadComments(), loadTaxonomy().catch(reportError)]);
     } catch (error) {
       reportError(error);
     }
@@ -490,6 +720,10 @@
     state.posts = [];
     state.media = [];
     state.comments = [];
+    state.taxonomy.categories = [];
+    state.taxonomy.tags = [];
+    if (taxonomyControls.categories) setTaxonomySelection('categories', []);
+    if (taxonomyControls.tags) setTaxonomySelection('tags', []);
     byId('post-list').replaceChildren();
     byId('media-list').replaceChildren();
     byId('comment-list').replaceChildren();

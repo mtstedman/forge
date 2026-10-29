@@ -134,6 +134,208 @@ final class RepositoryTest extends TestCase
         self::assertNull($media->find($id));
     }
 
+    public function testCategoriesAndTagsAreNormalizedPersistedAndRememberedAsVocabulary(): void
+    {
+        self::assertSame(['categories' => [], 'tags' => []], $this->posts->taxonomy());
+
+        $data = $this->postData('taxonomy-post');
+        $data['category'] = 'Ignored legacy';
+        $data['categories'] = [' Rehab ', 'Strength', 'Rehab', '', '   ', 'strength'];
+        $data['tags'] = ['knee', ' knee ', '', 'ACL'];
+        $id = $this->posts->create($data);
+
+        $post = (new PostRepository($this->pdo))->find($id);
+        self::assertNotNull($post);
+        self::assertSame(['Rehab', 'Strength', 'strength'], $post['categories']);
+        self::assertSame('Rehab', $post['category']);
+        self::assertSame(['knee', 'ACL'], $post['tags']);
+        self::assertSame(['Rehab', 'Strength', 'strength'], $this->posts->listAll()[0]['categories']);
+        self::assertSame(
+            ['categories' => ['Rehab', 'Strength', 'strength'], 'tags' => ['ACL', 'knee']],
+            $this->posts->taxonomy()
+        );
+
+        $this->posts->update($id, ['title' => 'Only the title changes']);
+        $post = $this->posts->find($id);
+        self::assertSame(['Rehab', 'Strength', 'strength'], $post['categories']);
+        self::assertSame('Rehab', $post['category']);
+        self::assertSame(['knee', 'ACL'], $post['tags']);
+
+        $this->posts->update($id, ['categories' => ['Mobility'], 'tags' => ['hip']]);
+        $post = $this->posts->find($id);
+        self::assertSame(['Mobility'], $post['categories']);
+        self::assertSame('Mobility', $post['category']);
+        self::assertSame(['hip'], $post['tags']);
+
+        $this->posts->update($id, ['categories' => [], 'tags' => []]);
+        $post = $this->posts->find($id);
+        self::assertSame([], $post['categories']);
+        self::assertSame('', $post['category']);
+        self::assertSame([], $post['tags']);
+
+        $this->posts->delete($id);
+        self::assertNull($this->posts->find($id));
+        $taxonomy = $this->posts->taxonomy();
+        self::assertSame(['Mobility', 'Rehab', 'Strength', 'strength'], $taxonomy['categories']);
+        self::assertSame(['ACL', 'hip', 'knee'], $taxonomy['tags']);
+        self::assertSame(1, $this->termCount('category', 'Rehab'));
+    }
+
+    public function testLegacyCategoryWritesMapToSingletonSelections(): void
+    {
+        $id = $this->posts->create($this->postData('legacy-category'));
+        $post = $this->posts->find($id);
+        self::assertSame(['Rehab'], $post['categories']);
+        self::assertSame('Rehab', $post['category']);
+
+        $this->posts->update($id, ['category' => '  Recovery ']);
+        $post = $this->posts->find($id);
+        self::assertSame(['Recovery'], $post['categories']);
+        self::assertSame('Recovery', $post['category']);
+
+        $this->posts->update($id, ['category' => 'Ignored', 'categories' => ['Explicit', 'Second']]);
+        $post = $this->posts->find($id);
+        self::assertSame(['Explicit', 'Second'], $post['categories']);
+        self::assertSame('Explicit', $post['category']);
+
+        $this->posts->update($id, ['category' => '   ']);
+        $post = $this->posts->find($id);
+        self::assertSame([], $post['categories']);
+        self::assertSame('', $post['category']);
+
+        $blank = $this->postData('blank-category');
+        $blank['category'] = '';
+        self::assertSame([], $this->posts->find($this->posts->create($blank))['categories']);
+        self::assertSame(['Explicit', 'Recovery', 'Rehab', 'Second'], $this->posts->taxonomy()['categories']);
+    }
+
+    public function testFailedPostSavesDoNotAddVocabulary(): void
+    {
+        $this->posts->create($this->postData('taken-slug'));
+        $before = $this->posts->taxonomy();
+
+        $duplicate = $this->postData('taken-slug');
+        $duplicate['categories'] = ['Never Saved'];
+        $duplicate['tags'] = ['never-saved'];
+        try {
+            $this->posts->create($duplicate);
+            self::fail('A duplicate slug must not be saved.');
+        } catch (\PDOException) {
+        }
+        self::assertSame($before, $this->posts->taxonomy());
+        self::assertFalse($this->pdo->inTransaction());
+
+        $otherId = $this->posts->create($this->postData('other-slug'));
+        try {
+            $this->posts->update($otherId, ['slug' => 'taken-slug', 'categories' => ['Also Never'], 'tags' => ['also-never']]);
+            self::fail('A duplicate slug must not be saved.');
+        } catch (\PDOException) {
+        }
+        self::assertSame($before, $this->posts->taxonomy());
+        self::assertSame(['Rehab'], $this->posts->find($otherId)['categories']);
+
+        foreach ([['categories' => 'Rehab'], ['tags' => ['ok', 5]], ['categories' => ['ok', null]]] as $invalid) {
+            try {
+                $this->posts->create(array_replace($this->postData('invalid-' . md5(serialize($invalid))), $invalid));
+                self::fail('Invalid categories or tags must be rejected.');
+            } catch (\RuntimeException $exception) {
+                self::assertNotInstanceOf(\PDOException::class, $exception);
+            }
+        }
+        self::assertSame($before, $this->posts->taxonomy());
+        self::assertCount(2, $this->posts->listAll());
+    }
+
+    public function testLegacyPostsSchemaMigratesCategoriesAndVocabularyRepeatably(): void
+    {
+        $pdo = Database::create('sqlite::memory:');
+        $pdo->exec(<<<'SQL'
+            CREATE TABLE media (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL UNIQUE,
+                original_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                width INTEGER,
+                height INTEGER,
+                alt_text TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE TABLE posts (
+                id INTEGER PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                excerpt TEXT NOT NULL DEFAULT '',
+                body_markdown TEXT NOT NULL DEFAULT '',
+                body_html TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags) AND json_type(tags) = 'array'),
+                faq TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(faq) AND json_type(faq) = 'array'),
+                meta_title TEXT,
+                meta_description TEXT,
+                cover_media_id INTEGER REFERENCES media(id) ON DELETE SET NULL,
+                author_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+                comments_enabled INTEGER NOT NULL DEFAULT 0 CHECK (comments_enabled IN (0, 1)),
+                published_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT NOT NULL DEFAULT '2020-01-01T00:00:00Z'
+            );
+            INSERT INTO posts (slug, title, body_markdown, category, tags, status, published_at)
+                VALUES ('published-legacy', 'Published', 'Kept body', ' Rehab ', '[" strength ", "rehab", "rehab", 5, ""]', 'published', '2024-01-01T00:00:00Z');
+            INSERT INTO posts (slug, title, category, tags)
+                VALUES ('draft-legacy', 'Draft', 'Mobility', '["hip"]');
+            INSERT INTO posts (slug, title, category, tags)
+                VALUES ('uncategorized-legacy', 'Uncategorized', '   ', '[]');
+            SQL);
+
+        Migrator::migrate($pdo);
+        $posts = new PostRepository($pdo);
+
+        $published = $posts->findPublishedBySlug('published-legacy');
+        self::assertNotNull($published);
+        self::assertSame(['Rehab'], $published['categories']);
+        self::assertSame(' Rehab ', $published['category']);
+        self::assertSame([' strength ', 'rehab', 'rehab', 5, ''], $published['tags']);
+        self::assertSame('Kept body', $published['body_markdown']);
+        self::assertSame('2020-01-01T00:00:00Z', $published['updated_at']);
+        $byslug = array_column($posts->listAll(), null, 'slug');
+        self::assertSame(['Mobility'], $byslug['draft-legacy']['categories']);
+        self::assertSame([], $byslug['uncategorized-legacy']['categories']);
+        self::assertSame(
+            ['categories' => ['Mobility', 'Rehab'], 'tags' => ['hip', 'rehab', 'strength']],
+            $posts->taxonomy()
+        );
+
+        $draftId = $byslug['draft-legacy']['id'];
+        $publishedId = $published['id'];
+        $posts->update($draftId, ['categories' => [], 'tags' => []]);
+        $posts->update($publishedId, ['categories' => ['Recovery', 'Rehab']]);
+
+        Migrator::migrate($pdo);
+        Migrator::migrate($pdo);
+
+        self::assertSame([], $posts->find($draftId)['categories']);
+        self::assertSame('', $posts->find($draftId)['category']);
+        self::assertSame(['Recovery', 'Rehab'], $posts->find($publishedId)['categories']);
+        self::assertSame(
+            ['categories' => ['Mobility', 'Recovery', 'Rehab'], 'tags' => ['hip', 'rehab', 'strength']],
+            $posts->taxonomy()
+        );
+        self::assertSame(
+            6,
+            (int) $pdo->query('SELECT COUNT(*) FROM taxonomy_terms')->fetchColumn()
+        );
+    }
+
+    private function termCount(string $kind, string $name): int
+    {
+        $statement = $this->pdo->prepare('SELECT COUNT(*) FROM taxonomy_terms WHERE kind = :kind AND name = :name');
+        $statement->execute(['kind' => $kind, 'name' => $name]);
+
+        return (int) $statement->fetchColumn();
+    }
+
     /** @return array<string, mixed> */
     private function postData(string $slug): array
     {

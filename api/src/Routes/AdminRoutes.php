@@ -46,6 +46,7 @@ final class AdminRoutes
         $group->delete('/posts/{id:[0-9]+}', [$posts, 'delete']);
         $group->post('/posts/{id:[0-9]+}/publish', [$posts, 'publish']);
         $group->post('/posts/{id:[0-9]+}/unpublish', [$posts, 'unpublish']);
+        $group->get('/taxonomy', [$posts, 'taxonomy']);
 
         $group->get('/comments', [$comments, 'index']);
         $group->patch('/comments/{id:[0-9]+}', [$comments, 'update']);

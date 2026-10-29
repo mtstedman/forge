@@ -159,18 +159,32 @@ $configJson = json_encode($config, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES 
                         <label class="field">Slug
                             <input id="post-slug" name="slug" required pattern="[a-z0-9]+(?:-[a-z0-9]+)*">
                         </label>
-                        <label class="field">Category
-                            <input id="post-category" name="category">
-                        </label>
+                        <div class="field">
+                            <label for="post-category">Categories <span class="hint">Type or paste, then use a comma</span></label>
+                            <div class="taxonomy-control">
+                                <div id="post-category-input-container" class="taxonomy-input-container">
+                                    <div id="post-category-chips" class="taxonomy-chips"></div>
+                                    <input id="post-category" class="taxonomy-input" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="post-category-suggestions">
+                                </div>
+                                <div id="post-category-suggestions" class="taxonomy-suggestions" role="listbox" aria-label="Saved category recommendations" hidden></div>
+                            </div>
+                        </div>
                         <label class="field field-wide">Excerpt
                             <textarea id="post-excerpt" name="excerpt" rows="3"></textarea>
                         </label>
                         <label class="field field-wide">Markdown body
                             <textarea id="post-body" name="body_markdown" rows="18"></textarea>
                         </label>
-                        <label class="field field-wide">Tags <span class="hint">Comma separated</span>
-                            <input id="post-tags" name="tags">
-                        </label>
+                        <div class="field field-wide">
+                            <label for="post-tags">Tags <span class="hint">Type or paste, then use a comma</span></label>
+                            <div class="taxonomy-control">
+                                <div id="post-tags-input-container" class="taxonomy-input-container">
+                                    <div id="post-tags-chips" class="taxonomy-chips"></div>
+                                    <input id="post-tags" class="taxonomy-input" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="post-tags-suggestions">
+                                </div>
+                                <div id="post-tags-suggestions" class="taxonomy-suggestions" role="listbox" aria-label="Saved tag recommendations" hidden></div>
+                            </div>
+                        </div>
                         <label class="field">Meta title
                             <input id="post-meta-title" name="meta_title">
                         </label>
