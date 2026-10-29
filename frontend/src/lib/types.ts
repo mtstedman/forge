@@ -31,7 +31,7 @@ export type PostDetail = PostSummary & {
 
 export type PostsResponse = {
   data: PostSummary[]
-  meta: { page: number; per_page: number; total: number }
+  meta: { page: number; per_page: number; total: number; available_tags: string[] }
 }
 
 export type PublicConfig = {

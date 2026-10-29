@@ -151,7 +151,8 @@ export async function getMainPageContent(): Promise<MainPageContent> {
 
 export async function getPosts(
   page: number,
-  perPage: number
+  perPage: number,
+  tags: string[] = []
 ): Promise<PostsResponse> {
   const safePage = Math.min(
     100_000,
@@ -165,6 +166,15 @@ export async function getPosts(
     page: String(safePage),
     per_page: String(safePerPage),
   })
+  const normalizedTags = Array.from(
+    new Set(
+      tags
+        .filter((tag): tag is string => typeof tag === "string")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    )
+  )
+  normalizedTags.forEach((tag) => query.append("tags[]", tag))
 
   const payload = await getJson(`/posts?${query.toString()}`)
   if (!isObject(payload) || !Array.isArray(payload.data)) {
@@ -172,12 +182,23 @@ export async function getPosts(
   }
 
   const meta = isObject(payload.meta) ? payload.meta : {}
+  const availableTags = Array.isArray(meta.available_tags)
+    ? Array.from(
+        new Set(
+          meta.available_tags
+            .filter((tag): tag is string => typeof tag === "string")
+            .map((tag) => tag.trim())
+            .filter(Boolean)
+        )
+      )
+    : []
   return {
     data: payload.data.map(normalizeSummary),
     meta: {
       page: integerValue(meta.page, safePage),
       per_page: integerValue(meta.per_page, safePerPage),
       total: integerValue(meta.total),
+      available_tags: availableTags,
     },
   }
 }

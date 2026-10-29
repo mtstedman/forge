@@ -55,7 +55,7 @@ final class PublicApiTest extends TestCase
         self::assertStringContainsString('public', $response->getHeaderLine('Cache-Control'));
         self::assertStringContainsString('max-age=', $response->getHeaderLine('Cache-Control'));
 
-        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 2], $json['meta']);
+        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 2, 'available_tags' => ['rehab', 'strength']], $json['meta']);
         self::assertSame(['newer', 'older'], array_column($json['data'], 'slug'));
         foreach ($json['data'] as $summary) {
             self::assertSame(self::SUMMARY_KEYS, array_keys($summary));
@@ -74,12 +74,157 @@ final class PublicApiTest extends TestCase
 
         $json = $this->decode($this->request($this->app(), 'GET', '/posts?page=2&per_page=2'));
 
-        self::assertSame(['page' => 2, 'per_page' => 2, 'total' => 3], $json['meta']);
+        self::assertSame(['page' => 2, 'per_page' => 2, 'total' => 3, 'available_tags' => ['rehab', 'strength']], $json['meta']);
         self::assertSame(['a'], array_column($json['data'], 'slug'));
 
         $clamped = $this->decode($this->request($this->app(), 'GET', '/posts?page=-4&per_page=100000'));
         self::assertSame(1, $clamped['meta']['page']);
         self::assertSame(50, $clamped['meta']['per_page']);
+    }
+
+    public function testTagFilterMatchesAnySelectedTagBeforePaginationNewestFirst(): void
+    {
+        $tagsBySlug = ['p01' => ['alpha', 'zeta'], 'p02' => ['beta'], 'p03' => ['alpha', 'beta'], 'p11' => ['beta']];
+        for ($day = 1; $day <= 12; $day++) {
+            $slug = sprintf('p%02d', $day);
+            $this->createPost($slug, [
+                'status' => 'published',
+                'published_at' => sprintf('2026-01-%02dT10:00:00Z', $day),
+                'tags' => $tagsBySlug[$slug] ?? ['general'],
+            ]);
+        }
+        $app = $this->app();
+        $allTags = ['alpha', 'beta', 'general', 'zeta'];
+
+        // No selection: unfiltered listing; tags beyond the first page are still listed.
+        $first = $this->decode($this->request($app, 'GET', '/posts'));
+        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 12, 'available_tags' => $allTags], $first['meta']);
+        self::assertSame(['p12', 'p11', 'p10', 'p09', 'p08', 'p07', 'p06', 'p05', 'p04', 'p03'], $this->slugs($first));
+        $second = $this->decode($this->request($app, 'GET', '/posts?page=2'));
+        self::assertSame(['page' => 2, 'per_page' => 10, 'total' => 12, 'available_tags' => $allTags], $second['meta']);
+        self::assertSame(['p02', 'p01'], $this->slugs($second));
+
+        // One selected tag, including a match beyond the first unfiltered page.
+        $alpha = $this->decode($this->request($app, 'GET', '/posts?tags[]=alpha'));
+        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 2, 'available_tags' => $allTags], $alpha['meta']);
+        self::assertSame(['p03', 'p01'], $this->slugs($alpha));
+        foreach ($alpha['data'] as $summary) {
+            self::assertSame(self::SUMMARY_KEYS, array_keys($summary));
+        }
+
+        $zeta = $this->decode($this->request($app, 'GET', '/posts?tags[]=zeta'));
+        self::assertSame(1, $zeta['meta']['total']);
+        self::assertSame(['p01'], $this->slugs($zeta));
+
+        // Multiple selected tags: ANY match, each post once (p03 has both), newest first.
+        $either = $this->decode($this->request($app, 'GET', '/posts?tags[]=alpha&tags[]=beta'));
+        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 4, 'available_tags' => $allTags], $either['meta']);
+        self::assertSame(['p11', 'p03', 'p02', 'p01'], $this->slugs($either));
+
+        // Filtering happens before pagination.
+        $paged = $this->decode($this->request($app, 'GET', '/posts?tags[]=beta&tags[]=alpha&page=2&per_page=2'));
+        self::assertSame(['page' => 2, 'per_page' => 2, 'total' => 4, 'available_tags' => $allTags], $paged['meta']);
+        self::assertSame(['p02', 'p01'], $this->slugs($paged));
+
+        $beyond = $this->decode($this->request($app, 'GET', '/posts?tags[]=alpha&tags[]=beta&page=3&per_page=2'));
+        self::assertSame(['page' => 3, 'per_page' => 2, 'total' => 4, 'available_tags' => $allTags], $beyond['meta']);
+        self::assertSame([], $beyond['data']);
+
+        $clamped = $this->request($app, 'GET', '/posts?tags[]=beta&page=-1&per_page=100000');
+        $clampedJson = $this->decode($clamped);
+        self::assertSame(['page' => 1, 'per_page' => 50, 'total' => 3, 'available_tags' => $allTags], $clampedJson['meta']);
+        self::assertSame(['p11', 'p03', 'p02'], $this->slugs($clampedJson));
+        self::assertStringContainsString('public', $clamped->getHeaderLine('Cache-Control'));
+        self::assertStringContainsString('max-age=', $clamped->getHeaderLine('Cache-Control'));
+    }
+
+    public function testDraftsPendingEditsUnpublishedPostsAndUnusedTaxonomyAreNotPublicTags(): void
+    {
+        $this->createPost('live', ['status' => 'published', 'published_at' => '2026-01-01T10:00:00Z', 'tags' => ['shared']]);
+        $this->createPost('draft', ['status' => 'draft', 'tags' => ['draft-only', 'shared']]);
+        $edited = $this->createPost('edited', ['status' => 'published', 'published_at' => '2026-01-02T10:00:00Z', 'tags' => ['before']]);
+        $this->posts->update($edited, ['tags' => ['pending-only']]);
+        $withdrawn = $this->createPost('withdrawn', ['status' => 'published', 'published_at' => '2026-01-03T10:00:00Z', 'tags' => ['withdrawn-only']]);
+        $this->posts->unpublish($withdrawn);
+        $this->pdo->exec("INSERT INTO taxonomy_terms (kind, name) VALUES ('tag', 'unused-vocab')");
+
+        self::assertContains('pending-only', $this->posts->taxonomy()['tags']);
+        self::assertContains('unused-vocab', $this->posts->taxonomy()['tags']);
+
+        $app = $this->app();
+        $all = $this->decode($this->request($app, 'GET', '/posts'));
+        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 2, 'available_tags' => ['before', 'shared']], $all['meta']);
+        self::assertSame(['edited', 'live'], $this->slugs($all));
+
+        self::assertSame(['live'], $this->slugs($this->decode($this->request($app, 'GET', '/posts?tags[]=shared'))));
+        self::assertSame(['edited'], $this->slugs($this->decode($this->request($app, 'GET', '/posts?tags[]=before'))));
+
+        foreach (['draft-only', 'pending-only', 'withdrawn-only', 'unused-vocab'] as $hidden) {
+            $response = $this->request($app, 'GET', '/posts?tags[]=' . rawurlencode($hidden));
+            $json = $this->decode($response);
+            self::assertSame(200, $response->getStatusCode(), $hidden);
+            self::assertSame([], $json['data'], $hidden);
+            self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 0, 'available_tags' => ['before', 'shared']], $json['meta'], $hidden);
+        }
+    }
+
+    public function testTagFilterNormalizesQueryValuesAndMatchesExactStoredTags(): void
+    {
+        $special = "a&b=c/d ü'\"<x>";
+        $this->createPost('lower', ['status' => 'published', 'published_at' => '2026-01-01T10:00:00Z', 'tags' => ['rehab']]);
+        $this->createPost('upper', ['status' => 'published', 'published_at' => '2026-01-02T10:00:00Z', 'tags' => ['Rehab']]);
+        $this->createPost('special', ['status' => 'published', 'published_at' => '2026-01-03T10:00:00Z', 'tags' => [$special]]);
+        $spaced = $this->createPost('spaced', ['status' => 'published', 'published_at' => '2026-01-04T10:00:00Z', 'tags' => []]);
+        $statement = $this->pdo->prepare('UPDATE posts SET tags = :tags WHERE id = :id');
+        $statement->execute(['tags' => '["  padded \t", 5, null, true, "", "   ", {"k": "rehab"}, ["rehab"]]', 'id' => $spaced]);
+        $app = $this->app();
+        $allTags = [$special, 'padded', 'Rehab', 'rehab'];
+
+        $all = $this->decode($this->request($app, 'GET', '/posts'));
+        self::assertSame(['page' => 1, 'per_page' => 10, 'total' => 4, 'available_tags' => $allTags], $all['meta']);
+
+        $cases = [
+            'exact lowercase' => ['/posts?tags[]=rehab', ['lower']],
+            'exact capitalized' => ['/posts?tags[]=Rehab', ['upper']],
+            'scalar value' => ['/posts?tags=Rehab', ['upper']],
+            'repeated and blank values' => ['/posts?tags[]=rehab&tags[]=rehab&tags[]=&tags[]=%20%20&tags[]=%20rehab%20', ['lower']],
+            'malformed nested entry dropped' => ['/posts?tags[0][]=Rehab&tags[]=rehab', ['lower']],
+            'stored whitespace trimmed' => ['/posts?tags[]=padded', ['spaced']],
+            'special characters' => ['/posts?tags[]=' . rawurlencode($special), ['special']],
+            'both case variants' => ['/posts?tags[]=Rehab&tags[]=rehab', ['upper', 'lower']],
+            'only blank values are no selection' => ['/posts?tags[]=&tags[]=%20', ['spaced', 'special', 'upper', 'lower']],
+            'only malformed values are no selection' => ['/posts?tags[x][y]=rehab', ['spaced', 'special', 'upper', 'lower']],
+            'empty scalar is no selection' => ['/posts?tags=', ['spaced', 'special', 'upper', 'lower']],
+            'different case does not match' => ['/posts?tags[]=REHAB', []],
+            'unknown tag' => ['/posts?tags[]=nope', []],
+            'non-string stored values never match' => ['/posts?tags[]=5', []],
+            'injection attempt is a literal value' => ['/posts?tags[]=' . rawurlencode("' OR 1=1 --"), []],
+        ];
+
+        foreach ($cases as $label => [$path, $expected]) {
+            $response = $this->request($app, 'GET', $path);
+            $json = $this->decode($response);
+            self::assertSame(200, $response->getStatusCode(), $label);
+            self::assertSame($expected, $this->slugs($json), $label);
+            self::assertSame(
+                ['page' => 1, 'per_page' => 10, 'total' => count($expected), 'available_tags' => $allTags],
+                $json['meta'],
+                $label,
+            );
+        }
+    }
+
+    public function testEmptyPublishedCollectionReturnsEmptyListAndTags(): void
+    {
+        $this->createPost('draft-only', ['status' => 'draft', 'tags' => ['hidden']]);
+        $app = $this->app();
+
+        foreach (['/posts', '/posts?tags[]=hidden', '/posts?tags[]=rehab&tags[]=strength'] as $path) {
+            $response = $this->request($app, 'GET', $path);
+            $json = $this->decode($response);
+            self::assertSame(200, $response->getStatusCode(), $path);
+            self::assertSame(['data' => [], 'meta' => ['page' => 1, 'per_page' => 10, 'total' => 0, 'available_tags' => []]], $json, $path);
+        }
     }
 
     public function testCoverIsExposedAsUrlAndAlt(): void
@@ -382,6 +527,15 @@ final class PublicApiTest extends TestCase
     }
 
     // ------------------------------------------------------------- helpers
+
+    /**
+     * @param array<mixed> $json
+     * @return list<string>
+     */
+    private function slugs(array $json): array
+    {
+        return array_column($json['data'], 'slug');
+    }
 
     private function mainPageContentRowCount(): int
     {

@@ -26,12 +26,23 @@ final class PostRepository
     {
     }
 
-    /** @return array<int, array<string, mixed>> */
-    public function listPublished(int $limit, int $offset): array
+    /**
+     * Live published posts, newest first. When $tags is nonempty only posts whose live
+     * tags contain at least one of them (exact, case-sensitive match after trimming)
+     * are returned, each once; the filter applies before pagination.
+     *
+     * @param list<string> $tags
+     * @return array<int, array<string, mixed>>
+     */
+    public function listPublished(int $limit, int $offset, array $tags = []): array
     {
+        [$where, $params] = self::publishedFilter($tags);
         $statement = $this->pdo->prepare(
-            "SELECT * FROM posts WHERE status = 'published' ORDER BY published_at DESC, id DESC LIMIT :limit OFFSET :offset"
+            'SELECT * FROM posts WHERE ' . $where . ' ORDER BY published_at DESC, id DESC LIMIT :limit OFFSET :offset'
         );
+        foreach ($params as $name => $value) {
+            $statement->bindValue($name, $value, PDO::PARAM_STR);
+        }
         $statement->bindValue(':limit', max(0, $limit), PDO::PARAM_INT);
         $statement->bindValue(':offset', max(0, $offset), PDO::PARAM_INT);
         $statement->execute();
@@ -39,11 +50,53 @@ final class PostRepository
         return $this->hydrateMany($statement->fetchAll());
     }
 
-    public function countPublished(): int
+    /**
+     * Number of live published posts matching the optional tag filter (see listPublished()).
+     *
+     * @param list<string> $tags
+     */
+    public function countPublished(array $tags = []): int
     {
-        $statement = $this->pdo->query("SELECT COUNT(*) FROM posts WHERE status = 'published'");
+        [$where, $params] = self::publishedFilter($tags);
+        $statement = $this->pdo->prepare('SELECT COUNT(*) FROM posts WHERE ' . $where);
+        foreach ($params as $name => $value) {
+            $statement->bindValue($name, $value, PDO::PARAM_STR);
+        }
+        $statement->execute();
 
         return (int) $statement->fetchColumn();
+    }
+
+    /**
+     * Unique trimmed, nonblank string tags used by live published posts, sorted
+     * case-insensitively with an exact-string tie-breaker. Pending draft edits,
+     * unpublished posts and unused vocabulary are never included.
+     *
+     * @return list<string>
+     */
+    public function publishedTags(): array
+    {
+        $statement = $this->pdo->query("SELECT p.tags FROM posts p WHERE p.status = 'published'");
+
+        $tags = [];
+        foreach ($statement->fetchAll(PDO::FETCH_COLUMN) as $json) {
+            foreach (self::decodeArray((string) $json) as $tag) {
+                if (!is_string($tag)) {
+                    continue;
+                }
+                $tag = trim($tag);
+                if ($tag !== '') {
+                    $tags[$tag] = true;
+                }
+            }
+        }
+
+        $tags = array_map('strval', array_keys($tags));
+        usort($tags, static function (string $a, string $b): int {
+            return strcasecmp($a, $b) ?: strcmp($a, $b);
+        });
+
+        return $tags;
     }
 
     /** @return array<string, mixed>|null */
@@ -411,6 +464,33 @@ final class PostRepository
         $delete = $this->pdo->prepare('DELETE FROM post_drafts WHERE post_id = :id');
         $delete->bindValue(':id', $id, PDO::PARAM_INT);
         $delete->execute();
+    }
+
+    /**
+     * WHERE clause and bound parameters selecting live published posts, optionally
+     * restricted to those having any of $tags (ANY/OR). Stored tags are compared as
+     * trimmed string values with exact (case-sensitive) equality; non-string entries
+     * never match.
+     *
+     * @param array<mixed> $tags
+     * @return array{0: string, 1: array<string, string>}
+     */
+    private static function publishedFilter(array $tags): array
+    {
+        $where = "status = 'published'";
+        $params = [];
+        foreach (array_values(array_unique(array_filter($tags, 'is_string'))) as $index => $tag) {
+            $params[':tag' . $index] = $tag;
+        }
+        if ($params === []) {
+            return [$where, []];
+        }
+
+        $where .= ' AND EXISTS (SELECT 1 FROM json_each(posts.tags) AS t'
+            . " WHERE t.type = 'text' AND trim(t.value, char(32, 9, 10, 13, 11)) IN ("
+            . implode(', ', array_keys($params)) . '))';
+
+        return [$where, $params];
     }
 
     /** Live posts columns plus the pending draft's columns under DRAFT_PREFIX aliases. */

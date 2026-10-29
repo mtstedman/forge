@@ -37,7 +37,22 @@ type ResourcesPageProps = {
   page: number
   totalPages: number
   posts: PostSummary[]
+  selectedTags: string[]
+  availableTags: string[]
   siteUrl: string
+}
+
+function normalizeTagQuery(value: string | string[] | undefined): string[] {
+  const values = Array.isArray(value) ? value : value === undefined ? [] : [value]
+  return Array.from(new Set(values.map((tag) => tag.trim()).filter(Boolean)))
+}
+
+function listingPathWithTags(page: number, tags: string[]): string {
+  const query = new URLSearchParams()
+  if (page > 1) query.set("page", String(page))
+  tags.forEach((tag) => query.append("tag", tag))
+  const encodedQuery = query.toString()
+  return encodedQuery === "" ? listingPath(1) : `${listingPath(1)}?${encodedQuery}`
 }
 
 export const getServerSideProps: GetServerSideProps<ResourcesPageProps> = async ({
@@ -46,15 +61,18 @@ export const getServerSideProps: GetServerSideProps<ResourcesPageProps> = async 
 }) => {
   const { publicConfig } = getFrontendConfig()
   const page = parsePageParam(query.page)
+  const selectedTags = normalizeTagQuery(query.tag)
 
   let status: ResourcesPageProps["status"] = 200
   let posts: PostSummary[] = []
+  let availableTags: string[] = []
   let total = 0
 
   try {
-    const response = await getPosts(page, RESOURCES_PER_PAGE)
+    const response = await getPosts(page, RESOURCES_PER_PAGE, selectedTags)
     posts = response.data.filter((post) => post.slug !== "").slice(0, RESOURCES_PER_PAGE)
     total = response.meta.total >= 0 ? response.meta.total : posts.length
+    availableTags = response.meta.available_tags
   } catch {
     status = 503
   }
@@ -72,7 +90,15 @@ export const getServerSideProps: GetServerSideProps<ResourcesPageProps> = async 
   }
 
   return {
-    props: { status, page, totalPages, posts, siteUrl: publicConfig.siteUrl },
+    props: {
+      status,
+      page,
+      totalPages,
+      posts,
+      selectedTags,
+      availableTags,
+      siteUrl: publicConfig.siteUrl,
+    },
   }
 }
 
@@ -103,7 +129,7 @@ function ListingError({
               There are no resources on this page. Head back to the first page to see the
               latest articles.
             </p>
-            <a href="/resources/" className={buttonVariants({ variant: "outline", size: "lg" })}>
+            <a href={retryPath} className={buttonVariants({ variant: "outline", size: "lg" })}>
               View the latest resources
             </a>
           </>
@@ -170,9 +196,11 @@ export default function ResourcesPage({
   page,
   totalPages,
   posts,
+  selectedTags,
+  availableTags,
   siteUrl,
 }: ResourcesPageProps): React.JSX.Element {
-  const canonicalPath = listingPath(page)
+  const canonicalPath = listingPathWithTags(page, selectedTags)
   const canonical = `${siteUrl}${canonicalPath}`
 
   if (status !== 200) {
@@ -190,7 +218,12 @@ export default function ResourcesPage({
           noindex
         />
         <PublicLayout active="resources">
-          <ListingError status={status} retryPath={canonicalPath} />
+          <ListingError
+            status={status}
+            retryPath={
+              status === 404 ? listingPathWithTags(1, selectedTags) : canonicalPath
+            }
+          />
         </PublicLayout>
       </>
     )
@@ -214,8 +247,14 @@ export default function ResourcesPage({
         title={`Resources${pageSuffix} | ${SITE_NAME}`}
         description={description}
         canonical={canonical}
-        prev={page > 1 ? `${siteUrl}${listingPath(page - 1)}` : undefined}
-        next={page < totalPages ? `${siteUrl}${listingPath(page + 1)}` : undefined}
+        prev={
+          page > 1 ? `${siteUrl}${listingPathWithTags(page - 1, selectedTags)}` : undefined
+        }
+        next={
+          page < totalPages
+            ? `${siteUrl}${listingPathWithTags(page + 1, selectedTags)}`
+            : undefined
+        }
         jsonLd={jsonLd}
       />
       <PublicLayout active="resources">
@@ -233,9 +272,66 @@ export default function ResourcesPage({
         </header>
 
         <section aria-label="Articles" className={cn(containerClass, "py-12 sm:py-16")}>
+          {availableTags.length > 0 ? (
+            <div
+              role="group"
+              className="mb-10 border-b pb-8"
+              aria-labelledby="resource-tag-filter-title"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 id="resource-tag-filter-title" className="text-sm font-semibold">
+                  Filter resources by tag
+                </h2>
+                {selectedTags.length > 0 ? (
+                  <a
+                    href={listingPath(1)}
+                    className={buttonVariants({ variant: "ghost", size: "sm" })}
+                  >
+                    Clear filters
+                  </a>
+                ) : null}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {availableTags.map((tag) => {
+                  const selected = selectedTags.includes(tag)
+                  const nextTags = selected
+                    ? selectedTags.filter((selectedTag) => selectedTag !== tag)
+                    : [...selectedTags, tag]
+
+                  return (
+                    <form key={tag} action={listingPath(1)} method="get">
+                      {nextTags.map((nextTag) => (
+                        <input key={nextTag} type="hidden" name="tag" value={nextTag} />
+                      ))}
+                      <button
+                        type="submit"
+                        aria-pressed={selected}
+                        className={buttonVariants({
+                          variant: selected ? "default" : "outline",
+                          size: "sm",
+                        })}
+                      >
+                        {tag}
+                      </button>
+                    </form>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+
           {posts.length === 0 ? (
             <div className="rounded-xl border border-dashed p-8 text-muted-foreground">
-              <p>New articles are on the way. Visit the resources page again soon.</p>
+              {selectedTags.length > 0 ? (
+                <div className="flex flex-col items-start gap-4">
+                  <p>No resources match the selected tags.</p>
+                  <a href={listingPath(1)} className={buttonVariants({ variant: "outline" })}>
+                    Clear filters
+                  </a>
+                </div>
+              ) : (
+                <p>New articles are on the way. Visit the resources page again soon.</p>
+              )}
             </div>
           ) : (
             <ul role="list" className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -253,7 +349,7 @@ export default function ResourcesPage({
               {page > 1 ? (
                 <a
                   rel="prev"
-                  href={listingPath(page - 1)}
+                  href={listingPathWithTags(page - 1, selectedTags)}
                   className={buttonVariants({ variant: "ghost" })}
                 >
                   <ArrowLeft className="size-4" aria-hidden="true" /> Newer resources
@@ -267,7 +363,7 @@ export default function ResourcesPage({
               {page < totalPages ? (
                 <a
                   rel="next"
-                  href={listingPath(page + 1)}
+                  href={listingPathWithTags(page + 1, selectedTags)}
                   className={buttonVariants({ variant: "ghost" })}
                 >
                   Older resources <ArrowRight className="size-4" aria-hidden="true" />

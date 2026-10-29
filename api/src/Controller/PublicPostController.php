@@ -15,7 +15,7 @@ use Psr\Http\Message\ServerRequestInterface;
  * Public read-only post endpoints. Only published posts are ever returned;
  * drafts are indistinguishable from missing posts (404).
  *
- * GET /posts?page=1&per_page=10
+ * GET /posts?page=1&per_page=10&tags[]=<tag>
  * GET /posts/{slug}
  */
 final class PublicPostController
@@ -44,14 +44,17 @@ final class PublicPostController
         $page = self::positiveInt($query['page'] ?? null, 1, self::MAX_PAGE);
         $perPage = self::positiveInt($query['per_page'] ?? null, self::DEFAULT_PER_PAGE, self::MAX_PER_PAGE);
 
-        $posts = $this->posts->listPublished($perPage, ($page - 1) * $perPage);
+        $tags = self::tags($query['tags'] ?? null);
+
+        $posts = $this->posts->listPublished($perPage, ($page - 1) * $perPage, $tags);
 
         return self::json($response, [
             'data' => array_map(fn (array $post): array => $this->summary($post), $posts),
             'meta' => [
                 'page' => $page,
                 'per_page' => $perPage,
-                'total' => $this->posts->countPublished(),
+                'total' => $this->posts->countPublished($tags),
+                'available_tags' => $this->posts->publishedTags(),
             ],
         ], 200, self::CACHE_PUBLIC);
     }
@@ -149,6 +152,35 @@ final class PublicPostController
         }
 
         return $items;
+    }
+
+    /**
+     * Selected tag filters: a scalar string or flat array of strings, trimmed, with
+     * blank and non-string entries dropped and exact duplicates removed.
+     *
+     * @return list<string>
+     */
+    private static function tags(mixed $value): array
+    {
+        if (is_string($value)) {
+            $value = [$value];
+        }
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $tags = [];
+        foreach ($value as $entry) {
+            if (!is_string($entry)) {
+                continue;
+            }
+            $tag = trim($entry);
+            if ($tag !== '' && !in_array($tag, $tags, true)) {
+                $tags[] = $tag;
+            }
+        }
+
+        return $tags;
     }
 
     private static function positiveInt(mixed $value, int $default, int $max): int
