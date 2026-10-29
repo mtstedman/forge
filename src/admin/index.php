@@ -78,8 +78,19 @@ $configJson = json_encode($config, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES 
             <div class="brand-mark" aria-hidden="true">F</div>
             <p class="eyebrow">Forge Performance Therapy</p>
             <h1 id="auth-title">Administration</h1>
-            <p id="auth-message" class="muted">Sign in to manage resources, media, and comments.</p>
-            <button id="sign-in" class="button button-primary" type="button">Sign in</button>
+            <p id="auth-message" class="muted" aria-live="polite">Sign in to manage resources, media, and comments.</p>
+            <form id="sign-in-form" class="auth-form" novalidate>
+                <label class="field" for="sign-in-email">
+                    Email
+                    <input id="sign-in-email" name="email" type="email" autocomplete="username" required>
+                </label>
+                <label class="field" for="sign-in-password">
+                    Password
+                    <input id="sign-in-password" name="password" type="password" autocomplete="current-password" required>
+                </label>
+                <button id="sign-in" class="button button-primary" type="submit">Sign in</button>
+            </form>
+            <button id="sign-in-sso" class="button auth-sso" type="button" hidden>Sign in with single sign-on</button>
         </section>
     </main>
 

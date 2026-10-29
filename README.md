@@ -28,6 +28,7 @@ repository's ignored runtime directory, outside all public document roots.
 | `api/public/` | Front controller (`index.php`) for the PHP JSON API, plus the uploads directory. Web root for the API. |
 | `api/src/` | API PHP classes (`Forge\Api\…`). |
 | `api/bin/migrate.php` | Applies `api/database/schema.sql` to the configured database. |
+| `api/bin/create-admin.php` | Creates an administrator account, or updates its password. See [Admin sign-in](#admin-sign-in). |
 | `api/database/` | `schema.sql` (tables) and `seed.sql` (optional sample posts). |
 | `api/var/` | Runtime data: default SQLite database, JWKS cache, PHPUnit cache. |
 | `api/tests/`, `tests/site/` | PHPUnit suites `api` and `site`. |
@@ -79,7 +80,19 @@ does not need to be regenerated after you add classes.
 
    With the default settings, this creates `api/var/forge.sqlite`.
 
-4. Optional: load the sample posts. The seed uses `INSERT OR IGNORE`, so you can
+4. Create the first administrator. Use your own email address and a strong
+   password. The values below are placeholders:
+
+   ```sh
+   php api/bin/create-admin.php admin@example.com 'change-me' 'Site Admin'
+   ```
+
+   You can also omit the password argument and supply it through the
+   `ADMIN_PASSWORD` environment variable. Re-running the command for an
+   existing email updates that administrator's password. See
+   [Admin sign-in](#admin-sign-in).
+
+5. Optional: load the sample posts. The seed uses `INSERT OR IGNORE`, so you can
    apply it more than once:
 
    ```sh
@@ -117,6 +130,9 @@ CORS_ALLOWED_ORIGINS=http://localhost:8000
 OAUTH_REDIRECT_URI=http://localhost:8000/admin/
 ```
 
+`OAUTH_REDIRECT_URI` is only used if you configure the optional
+[OAuth provider](#oauth-provider-optional) for single sign-on.
+
 The built-in server ignores `.htaccess`, which has two effects when you run
 locally:
 
@@ -143,16 +159,20 @@ production OAuth settings and `APP_KEY`, out of the repository.
 | `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins that may call the API, e.g. `https://ancoratiming.com`. |
 | `PUBLIC_COMMENTS_ENABLED` | `false` | Global switch for public comment submission. See [Comments](#comments). |
 | `COMMENT_RATE_LIMIT` | `3` | Number of comments accepted per IP address in each 600-second window. |
-| `OAUTH_ISSUER` | – | Expected `iss` claim of admin access tokens. Required for `/admin`. |
-| `OAUTH_AUDIENCE` | – | Expected `aud` claim (the API identifier). Required for `/admin`. |
-| `OAUTH_JWKS_URL` | – | Provider JWKS endpoint used to verify token signatures. Required for `/admin`. |
-| `OAUTH_REQUIRED_SCOPE` | empty | If set, tokens must include this scope in `scope` or `scp`. |
+| `OAUTH_ISSUER` | – | Optional, SSO only. Expected `iss` claim of provider access tokens. |
+| `OAUTH_AUDIENCE` | – | Optional, SSO only. Expected `aud` claim (the API identifier). |
+| `OAUTH_JWKS_URL` | – | Optional, SSO only. Provider JWKS endpoint used to verify token signatures. |
+| `OAUTH_REQUIRED_SCOPE` | empty | Optional, SSO only. If set, provider tokens must include this scope in `scope` or `scp`. |
 | `UPLOAD_DIR` | `api/public/uploads` | Storage directory for uploaded images. Relative paths resolve against the repository root. |
 | `UPLOAD_MAX_BYTES` | `5242880` | Maximum upload size in bytes (5 MiB). |
 | `MEDIA_BASE_URL` | `/uploads` for post covers | Public URL prefix for uploaded files. See [Uploads](#uploads). |
 | `DATABASE_URL`, `DB_CONNECTION`, `DB_DATABASE` | – | Database connection. See `database.env.example`. |
+| `ADMIN_PASSWORD` | – | Used only by `api/bin/create-admin.php` when you omit the password argument. Set it for that one command rather than keeping it in `.env`. |
 
 ### Website (`src/includes`)
+
+The `OAUTH_*` settings below are optional. Set them only if you want the admin
+UI to offer single sign-on through an external provider.
 
 | Variable | Example | Purpose |
 | --- | --- | --- |
@@ -166,12 +186,45 @@ production OAuth settings and `APP_KEY`, out of the repository.
 | `OAUTH_SCOPE` | `openid profile email` | Scopes requested at sign-in. If `OAUTH_REQUIRED_SCOPE` is set, include it here. |
 | `OAUTH_REDIRECT_URI` | `https://ancoratiming.com/admin/` | URL the provider returns to after sign-in. |
 
-## OAuth provider
+## Admin sign-in
 
-The admin UI (`/admin/`) signs in through an external OAuth 2.0 / OpenID Connect
-provider. It calls the API's `/admin/*` routes with an
-`Authorization: Bearer <access token>` header. Configure the provider as
-follows:
+The admin UI (`/admin/`) signs in with an email address and password. It sends
+them to `POST /admin/login` on the API, which returns a bearer access token for
+a local session. The UI then calls the API's `/admin/*` routes with an
+`Authorization: Bearer <access token>` header. Sessions last 12 hours, and **Sign out** ends the session through
+`POST /admin/logout`.
+
+Administrators are stored in the `admin_users` table, which
+`php api/bin/migrate.php` creates. Email addresses are stored trimmed and in
+lower case, and only a `password_hash()` hash of each password is kept. Create
+the first administrator, or reset an existing administrator's password, with:
+
+```sh
+php api/bin/create-admin.php <email> [password] [name]
+```
+
+- If you omit `[password]`, the script reads it from the `ADMIN_PASSWORD`
+  environment variable instead, for example
+  `ADMIN_PASSWORD='change-me' php api/bin/create-admin.php admin@example.com`.
+- If an administrator with that email already exists, re-running the script
+  updates their password. The `[name]` argument is used only when a new
+  administrator is created.
+- The script loads `.env`, applies the schema first (like
+  `php api/bin/migrate.php`), and prints a one-line confirmation. It never
+  prints the password or its hash. It exits with status 1 and a usage message
+  if the email is invalid or the password is empty.
+
+Never commit real administrator credentials. The examples in this README use
+placeholder values.
+
+## OAuth provider (optional)
+
+OAuth 2.0 / OpenID Connect configuration is optional. You only need it if
+administrators should also sign in through an external provider (single
+sign-on). The API then accepts the provider's JWT access tokens on `/admin/*`
+in addition to local session tokens. The admin UI shows the single sign-on
+button only when `OAUTH_AUTHORIZE_URL`, `OAUTH_CLIENT_ID` and
+`OAUTH_REDIRECT_URI` are set. Configure the provider as follows:
 
 - **Issuer**: set the provider's issuer identifier as `OAUTH_ISSUER`. The
   token's `iss` claim must match it exactly.
@@ -195,8 +248,9 @@ follows:
 
 If the site and the API run on different origins, add the site origin to
 `CORS_ALLOWED_ORIGINS`. Otherwise the admin UI and the comment form cannot
-call the API. Requests to `/admin/*` fail until `OAUTH_ISSUER`,
-`OAUTH_AUDIENCE` and `OAUTH_JWKS_URL` are all set.
+call the API. Without the API's `OAUTH_ISSUER`, `OAUTH_AUDIENCE` and
+`OAUTH_JWKS_URL`, `/admin/*` accepts only local session tokens from
+`POST /admin/login`.
 
 ## Comments
 

@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Forge\Api;
 
+use Forge\Api\Auth\AdminSessionAuthenticator;
 use Forge\Api\Auth\JwtAuthMiddleware;
 use Forge\Api\Auth\JwtVerifier;
+use Forge\Api\Controller\AdminAuthController;
+use Forge\Api\Repository\AdminSessionRepository;
+use Forge\Api\Repository\AdminUserRepository;
 use Forge\Api\Routes\AdminRoutes;
 use Forge\Api\Routes\PublicRoutes;
 use PDO;
@@ -52,11 +56,17 @@ final class AppFactory
         if ($keyProvider !== null && !is_callable($keyProvider)) {
             throw new \InvalidArgumentException('jwt_key_provider must be callable.');
         }
+        $adminSessions = new AdminSessionRepository($pdo);
+        $adminAuth = new AdminAuthController(new AdminUserRepository($pdo), $adminSessions);
+        // Login is registered outside the protected group so it needs no bearer token.
+        $app->post('/admin/login', [$adminAuth, 'login']);
+
         $app->group('/admin', static function (RouteCollectorProxyInterface $group) use ($pdo, $config): void {
             AdminRoutes::register($group, $pdo, $config);
         })->add(new JwtAuthMiddleware(
             new JwtVerifier($config, $keyProvider),
             $app->getResponseFactory(),
+            new AdminSessionAuthenticator($adminSessions),
         ));
 
         return $app;

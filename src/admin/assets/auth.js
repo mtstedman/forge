@@ -72,6 +72,47 @@
     window.location.assign(url.toString());
   }
 
+  async function signInWithPassword(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const emailInput = document.getElementById('sign-in-email');
+    const passwordInput = document.getElementById('sign-in-password');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+
+    if (!email || !password) {
+      showSignIn('Enter your email and password.');
+      return;
+    }
+
+    submitButton.disabled = true;
+    try {
+      const response = await fetch(apiUrl('/admin/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const payload = await response.json().catch(() => ({}));
+      const token = payload && payload.data ? payload.data.access_token : null;
+
+      if (!response.ok || typeof token !== 'string' || token === '') {
+        showSignIn(typeof payload.error === 'string' ? payload.error : 'Sign-in failed.');
+        return;
+      }
+
+      accessToken = token;
+      sessionStorage.setItem(TOKEN_KEY, accessToken);
+      passwordInput.value = '';
+      await verifySession();
+    } catch (_error) {
+      showSignIn('Sign-in failed.');
+    } finally {
+      submitButton.disabled = false;
+    }
+  }
+
   async function exchangeCode(code, returnedState) {
     const expectedState = sessionStorage.getItem(STATE_KEY);
     const verifier = sessionStorage.getItem(VERIFIER_KEY);
@@ -153,11 +194,26 @@
     document.dispatchEvent(new CustomEvent('forge:authenticated', { detail: currentUser }));
   }
 
+  async function signOut() {
+    if (accessToken) {
+      try {
+        await apiFetch('/admin/logout', { method: 'POST' });
+      } catch (_error) {
+        // Clearing local state still signs the user out if the API is unavailable.
+      }
+    }
+    clearToken('You have signed out.');
+  }
+
   async function start() {
-    document.getElementById('sign-in').addEventListener('click', () => {
+    const ssoButton = document.getElementById('sign-in-sso');
+    ssoButton.hidden = !(config.authorizeUrl && config.clientId && config.redirectUri);
+
+    document.getElementById('sign-in-form').addEventListener('submit', signInWithPassword);
+    ssoButton.addEventListener('click', () => {
       signIn().catch((error) => showSignIn(error.message));
     });
-    document.getElementById('sign-out').addEventListener('click', () => clearToken('You have signed out.'));
+    document.getElementById('sign-out').addEventListener('click', signOut);
 
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');

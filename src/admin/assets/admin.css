@@ -44,6 +44,9 @@ h1, h2, h3, h4 { font-family: Georgia, "Times New Roman", serif; font-weight: 50
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
 }
+.auth-form { margin-top: 1.5rem; display: grid; gap: 1rem; text-align: left; }
+.auth-form .button, .auth-sso { width: 100%; }
+.auth-sso { margin-top: .75rem; }
 
 .brand-mark {
   width: 4.5rem;

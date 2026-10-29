@@ -16,6 +16,7 @@ final class JwtAuthMiddleware implements MiddlewareInterface
     public function __construct(
         private readonly JwtVerifier $verifier,
         private readonly ResponseFactoryInterface $responseFactory,
+        private readonly ?AdminSessionAuthenticator $sessions = null,
     ) {
     }
 
@@ -24,6 +25,17 @@ final class JwtAuthMiddleware implements MiddlewareInterface
         $authorization = $request->getHeaderLine('Authorization');
         if (preg_match('/^Bearer\s+(\S+)$/i', trim($authorization), $matches) !== 1) {
             return $this->unauthorized();
+        }
+
+        if ($this->sessions !== null) {
+            $session = $this->sessions->authenticate($matches[1]);
+            if ($session !== null) {
+                return $handler->handle(
+                    $request
+                        ->withAttribute('jwt_claims', $session)
+                        ->withAttribute('admin_session_id', $session['session_id'])
+                );
+            }
         }
 
         try {

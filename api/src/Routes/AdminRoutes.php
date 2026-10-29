@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Forge\Api\Routes;
 
 use Forge\Api\Config;
+use Forge\Api\Controller\AdminAuthController;
 use Forge\Api\Controller\AdminCommentController;
 use Forge\Api\Controller\AdminMediaController;
 use Forge\Api\Controller\AdminPostController;
+use Forge\Api\Repository\AdminSessionRepository;
+use Forge\Api\Repository\AdminUserRepository;
 use PDO;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -20,6 +23,9 @@ final class AdminRoutes
         $posts = new AdminPostController($pdo);
         $comments = new AdminCommentController($pdo);
         $media = new AdminMediaController($pdo, $config);
+        $auth = new AdminAuthController(new AdminUserRepository($pdo), new AdminSessionRepository($pdo));
+
+        $group->post('/logout', [$auth, 'logout']);
 
         $group->get('/me', static function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
             $claims = $request->getAttribute('jwt_claims', []);

@@ -47,6 +47,7 @@ final class AdminAuthTest extends TestCase
             ['GET', '/admin/comments'],
             ['PATCH', '/admin/comments/1'],
             ['DELETE', '/admin/comments/1'],
+            ['POST', '/admin/logout'],
         ] as [$method, $path]) {
             $response = $this->request($app, $method, $path);
             self::assertSame(401, $response->getStatusCode(), $method . ' ' . $path);
