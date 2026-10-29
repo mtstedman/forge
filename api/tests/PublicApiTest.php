@@ -559,6 +559,7 @@ final class PublicApiTest extends TestCase
                 'credential_chips' => ['DPT', 'CSCS'],
                 'location_chip' => 'Twin Cities Metro, MN',
                 'image_alt' => 'Photo placeholder: Joseph treating a patient at home or in a gym',
+                'image_url' => '',
             ],
             'approach' => [
                 'eyebrow' => 'I. Approach',
@@ -592,6 +593,7 @@ final class PublicApiTest extends TestCase
                 'role' => 'Founder',
                 'biography' => 'Joseph is a Doctor of Physical Therapy and Certified Strength & Conditioning Specialist. He trains and competes himself, so he understands what it takes to get back to the work you care about.',
                 'portrait_alt' => 'Portrait placeholder for Dr. Joseph Sperlak',
+                'portrait_url' => '',
                 'credentials' => [
                     ['credential' => 'Doctor of Physical Therapy', 'label' => 'DPT'],
                     ['credential' => 'Certified Strength & Conditioning Specialist', 'label' => 'CSCS'],

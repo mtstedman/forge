@@ -23,6 +23,7 @@ final class MainPageContentController
     private const HEADING = 200;
     private const TEXT = 1000;
     private const LONG_TEXT = 2000;
+    private const URL = 2048;
 
     private const KIND = '__kind';
 
@@ -181,8 +182,34 @@ final class MainPageContentController
             self::addError($errors, $path, 'Must be a phone number with at least 7 digits.');
             return null;
         }
+        if ($format === 'url' && !self::isImageUrl($value)) {
+            self::addError($errors, $path, 'Must be a site-relative path starting with "/" or an absolute http(s) URL.');
+            return null;
+        }
 
         return $value;
+    }
+
+    /**
+     * Accepts a site-relative path beginning with exactly one "/" or an absolute http(s)
+     * URL. Whitespace, backslashes (browsers read "/\host" as protocol-relative), a
+     * protocol-relative "//" prefix and every other scheme are rejected.
+     */
+    private static function isImageUrl(string $value): bool
+    {
+        if (preg_match('/[\s\p{Z}\\\\]/u', $value) === 1) {
+            return false;
+        }
+        if (str_starts_with($value, '/')) {
+            return !str_starts_with($value, '//');
+        }
+        if (filter_var($value, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+        $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
+        $host = (string) parse_url($value, PHP_URL_HOST);
+
+        return in_array($scheme, ['http', 'https'], true) && $host !== '';
     }
 
     /** @param array<string, string> $errors */
@@ -210,6 +237,7 @@ final class MainPageContentController
                 'credential_chips' => self::listOf(self::text(self::LABEL), 0, 8),
                 'location_chip' => self::text(self::LABEL),
                 'image_alt' => self::text(self::HEADING),
+                'image_url' => self::text(self::URL, false, 'url'),
             ],
             'approach' => [
                 'eyebrow' => self::text(self::LABEL),
@@ -239,6 +267,7 @@ final class MainPageContentController
                 'role' => self::text(self::LABEL),
                 'biography' => self::text(self::LONG_TEXT),
                 'portrait_alt' => self::text(self::HEADING),
+                'portrait_url' => self::text(self::URL, false, 'url'),
                 'credentials' => self::listOf([
                     'credential' => self::text(self::HEADING),
                     'label' => self::text(self::LABEL),

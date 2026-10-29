@@ -148,7 +148,8 @@ INSERT OR IGNORE INTO main_page_content (id, document) VALUES (1, json('{
         "secondary_cta_label": "What I treat",
         "credential_chips": ["DPT", "CSCS"],
         "location_chip": "Twin Cities Metro, MN",
-        "image_alt": "Photo placeholder: Joseph treating a patient at home or in a gym"
+        "image_alt": "Photo placeholder: Joseph treating a patient at home or in a gym",
+        "image_url": ""
     },
     "approach": {
         "eyebrow": "I. Approach",
@@ -222,6 +223,7 @@ INSERT OR IGNORE INTO main_page_content (id, document) VALUES (1, json('{
         "role": "Founder",
         "biography": "Joseph is a Doctor of Physical Therapy and Certified Strength & Conditioning Specialist. He trains and competes himself, so he understands what it takes to get back to the work you care about.",
         "portrait_alt": "Portrait placeholder for Dr. Joseph Sperlak",
+        "portrait_url": "",
         "credentials": [
             {"credential": "Doctor of Physical Therapy", "label": "DPT"},
             {"credential": "Certified Strength & Conditioning Specialist", "label": "CSCS"},

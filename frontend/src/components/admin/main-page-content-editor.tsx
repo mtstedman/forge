@@ -12,9 +12,11 @@ import {
   Save,
   Trash2,
 } from "lucide-react"
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 
 import { useAdminAuth } from "@/components/admin/auth-provider"
+import { MediaImageField } from "@/components/admin/media-image-field"
+import { readPublicApiUrl } from "@/components/admin/media-panel"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -25,6 +27,7 @@ import {
   normalizeMainPageContentResponse,
   type MainPageContent,
 } from "@/lib/main-page-content"
+import type { ApiEnvelope, MediaItem } from "@/lib/types"
 
 const fieldClass = "space-y-2"
 const gridClass = "grid gap-5 md:grid-cols-2"
@@ -169,6 +172,34 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message !== "" ? error.message : fallback
 }
 
+function optionalNumber(value: unknown): number | null {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizeMediaItem(value: unknown): MediaItem | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const id = optionalNumber(row.id)
+  if (id === null || !Number.isInteger(id) || typeof row.url !== "string") return null
+  return {
+    id,
+    url: row.url,
+    original_name: typeof row.original_name === "string" ? row.original_name : "",
+    mime_type: typeof row.mime_type === "string" ? row.mime_type : "",
+    size_bytes: optionalNumber(row.size_bytes) ?? 0,
+    width: optionalNumber(row.width),
+    height: optionalNumber(row.height),
+    alt_text: typeof row.alt_text === "string" ? row.alt_text : null,
+    created_at: typeof row.created_at === "string" ? row.created_at : "",
+  }
+}
+
 function cloneDocument(document: MainPageContent): MainPageContent {
   return structuredClone(document)
 }
@@ -216,6 +247,44 @@ export function MainPageContentEditor(): React.JSX.Element {
   const [notice, setNotice] = useState<Notice>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const loadRequestRef = useRef(0)
+  const [media, setMedia] = useState<MediaItem[]>([])
+  const [mediaState, setMediaState] = useState<LoadState>("loading")
+  const [mediaError, setMediaError] = useState<string | null>(null)
+  const mediaRequestRef = useRef(0)
+  const [apiUrl, setApiUrl] = useState("")
+
+  useEffect(() => {
+    setApiUrl(readPublicApiUrl())
+  }, [])
+
+  const loadMedia = useCallback(async () => {
+    const requestId = ++mediaRequestRef.current
+    setMediaState("loading")
+    setMediaError(null)
+    try {
+      const payload = await request<ApiEnvelope<unknown>>("/admin/media")
+      if (requestId !== mediaRequestRef.current) return
+      const data: unknown = payload?.data
+      const rows: unknown[] = Array.isArray(data) ? data : []
+      setMedia(rows.flatMap((row) => normalizeMediaItem(row) ?? []))
+      setMediaState("ready")
+    } catch (error) {
+      if (requestId !== mediaRequestRef.current) return
+      setMediaError(errorText(error, "Images could not be loaded."))
+      setMediaState("error")
+    }
+  }, [request])
+
+  useEffect(() => {
+    if (!authenticated) {
+      mediaRequestRef.current += 1
+      setMedia([])
+      setMediaState("loading")
+      setMediaError(null)
+      return
+    }
+    void loadMedia()
+  }, [authenticated, loadMedia])
 
   useEffect(() => {
     if (!authenticated) {
@@ -398,6 +467,16 @@ export function MainPageContentEditor(): React.JSX.Element {
     )
   }
 
+  const mediaFieldProps = {
+    media,
+    mediaState,
+    mediaError,
+    onReloadMedia: () => void loadMedia(),
+    errors: fieldErrors,
+    apiUrl,
+    disabled: saving,
+  }
+
   const addButton = (label: string, path: string, item: unknown, disabled = false) => (
     <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => addItem(path, item)}>
       <Plus aria-hidden="true" />
@@ -446,11 +525,12 @@ export function MainPageContentEditor(): React.JSX.Element {
           </div>
         </EditorSection>
 
-        <EditorSection title="Hero" description="Opening message, call-to-action labels, credentials, and image description.">
+        <EditorSection title="Hero" description="Opening message, call-to-action labels, credentials, hero image, and image description.">
           <div className={gridClass}>
             <TextField label="Eyebrow" value={document.hero.eyebrow} path="hero.eyebrow" onChange={(value) => change("hero.eyebrow", value)} errors={fieldErrors} maxLength={120} required={false} />
             <TextField label="Heading" value={document.hero.heading} path="hero.heading" onChange={(value) => change("hero.heading", value)} errors={fieldErrors} maxLength={200} />
             <TextField label="Introduction" value={document.hero.introduction} path="hero.introduction" onChange={(value) => change("hero.introduction", value)} errors={fieldErrors} maxLength={1000} multiline rows={4} />
+            <MediaImageField label="Hero image" path="hero.image_url" value={document.hero.image_url} onChange={(value) => change("hero.image_url", value)} {...mediaFieldProps} />
             <TextField label="Image alternative text" value={document.hero.image_alt} path="hero.image_alt" onChange={(value) => change("hero.image_alt", value)} errors={fieldErrors} maxLength={200} />
             <TextField label="Primary button label" value={document.hero.primary_cta_label} path="hero.primary_cta_label" onChange={(value) => change("hero.primary_cta_label", value)} errors={fieldErrors} maxLength={120} />
             <TextField label="Secondary button label" value={document.hero.secondary_cta_label} path="hero.secondary_cta_label" onChange={(value) => change("hero.secondary_cta_label", value)} errors={fieldErrors} maxLength={120} />
@@ -517,13 +597,14 @@ export function MainPageContentEditor(): React.JSX.Element {
           </div>
         </EditorSection>
 
-        <EditorSection title="About" description="Provider identity, biography, portrait description, and credentials.">
+        <EditorSection title="About" description="Provider identity, biography, portrait image and description, and credentials.">
           <div className={gridClass}>
             <TextField label="Eyebrow" value={document.about.eyebrow} path="about.eyebrow" onChange={(value) => change("about.eyebrow", value)} errors={fieldErrors} maxLength={120} />
             <TextField label="Section title" value={document.about.title} path="about.title" onChange={(value) => change("about.title", value)} errors={fieldErrors} maxLength={200} required={false} />
             <TextField label="Name" value={document.about.name} path="about.name" onChange={(value) => change("about.name", value)} errors={fieldErrors} maxLength={120} />
             <TextField label="Credentials suffix" value={document.about.suffix} path="about.suffix" onChange={(value) => change("about.suffix", value)} errors={fieldErrors} maxLength={120} />
             <TextField label="Role" value={document.about.role} path="about.role" onChange={(value) => change("about.role", value)} errors={fieldErrors} maxLength={120} />
+            <MediaImageField label="Portrait" path="about.portrait_url" value={document.about.portrait_url} onChange={(value) => change("about.portrait_url", value)} {...mediaFieldProps} />
             <TextField label="Portrait alternative text" value={document.about.portrait_alt} path="about.portrait_alt" onChange={(value) => change("about.portrait_alt", value)} errors={fieldErrors} maxLength={200} />
           </div>
           <TextField label="Biography" value={document.about.biography} path="about.biography" onChange={(value) => change("about.biography", value)} errors={fieldErrors} maxLength={2000} multiline rows={5} />

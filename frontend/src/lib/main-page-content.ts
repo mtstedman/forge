@@ -9,6 +9,7 @@ export type MainPageContent = {
     credential_chips: string[]
     location_chip: string
     image_alt: string
+    image_url: string
   }
   approach: {
     eyebrow: string
@@ -30,6 +31,7 @@ export type MainPageContent = {
     role: string
     biography: string
     portrait_alt: string
+    portrait_url: string
     credentials: Array<{ credential: string; label: string }>
   }
   pricing: {
@@ -109,6 +111,7 @@ export const DEFAULT_MAIN_PAGE_CONTENT: MainPageContent = {
     credential_chips: ["DPT", "CSCS"],
     location_chip: "Twin Cities Metro, MN",
     image_alt: "Photo placeholder: Joseph treating a patient at home or in a gym",
+    image_url: "",
   },
   approach: {
     eyebrow: "I. Approach",
@@ -190,6 +193,7 @@ export const DEFAULT_MAIN_PAGE_CONTENT: MainPageContent = {
     biography:
       "Joseph is a Doctor of Physical Therapy and Certified Strength & Conditioning Specialist. He trains and competes himself, so he understands what it takes to get back to the work you care about.",
     portrait_alt: "Portrait placeholder for Dr. Joseph Sperlak",
+    portrait_url: "",
     credentials: [
       { credential: "Doctor of Physical Therapy", label: "DPT" },
       { credential: "Certified Strength & Conditioning Specialist", label: "CSCS" },
@@ -395,6 +399,7 @@ export function normalizeMainPageContentResponse(value: unknown): MainPageConten
     "credential_chips",
     "location_chip",
     "image_alt",
+    "image_url",
   ])
   const approach = object(data.approach, "data.approach", [
     "eyebrow",
@@ -412,6 +417,7 @@ export function normalizeMainPageContentResponse(value: unknown): MainPageConten
     "role",
     "biography",
     "portrait_alt",
+    "portrait_url",
     "credentials",
   ])
   const pricing = object(data.pricing, "data.pricing", ["eyebrow", "title", "description", "items"])
@@ -469,6 +475,7 @@ export function normalizeMainPageContentResponse(value: unknown): MainPageConten
       ),
       location_chip: text(hero.location_chip, "data.hero.location_chip", 120),
       image_alt: text(hero.image_alt, "data.hero.image_alt", 200),
+      image_url: text(hero.image_url, "data.hero.image_url", 2048, false),
     },
     approach: {
       eyebrow: text(approach.eyebrow, "data.approach.eyebrow", 120),
@@ -503,6 +510,7 @@ export function normalizeMainPageContentResponse(value: unknown): MainPageConten
       role: text(about.role, "data.about.role", 120),
       biography: text(about.biography, "data.about.biography", 2000),
       portrait_alt: text(about.portrait_alt, "data.about.portrait_alt", 200),
+      portrait_url: text(about.portrait_url, "data.about.portrait_url", 2048, false),
       credentials: list(about.credentials, "data.about.credentials", 0, 12, (item, path) => {
         const row = object(item, path, ["credential", "label"])
         return {

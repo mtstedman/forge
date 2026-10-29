@@ -847,6 +847,10 @@ final class AdminApiTest extends TestCase
             array_keys($data),
         );
         self::assertSame('Find the root cause. Then forge your path to recovery.', $data['hero']['heading']);
+        self::assertSame('', $data['hero']['image_url']);
+        self::assertSame('', $data['about']['portrait_url']);
+        self::assertSame(['image_alt', 'image_url'], array_slice(array_keys($data['hero']), -2));
+        self::assertSame(['portrait_alt', 'portrait_url', 'credentials'], array_slice(array_keys($data['about']), -3));
         self::assertSame(['60', '1', '§', '—'], array_column($data['approach']['principles'], 'marker'));
         self::assertSame(['i.', 'ii.', 'iii.', 'iv.', 'v.', 'vi.'], array_column($data['services']['items'], 'number'));
         self::assertSame([false, true, false], array_column($data['pricing']['items'], 'featured'));
@@ -962,6 +966,132 @@ final class AdminApiTest extends TestCase
         self::assertSame(422, $notAnObject->getStatusCode());
         self::assertArrayHasKey('body', $this->decode($notAnObject)['fields']);
         self::assertSame($before, $this->mainPageContent());
+    }
+
+    public function testMainPageContentImageUrlsRoundTripThroughAdminAndPublicReads(): void
+    {
+        $document = $this->mainPageContent();
+        $document['hero']['image_url'] = '/uploads/abc.jpg';
+        $document['about']['portrait_url'] = 'https://cdn.example.com/p.jpg';
+
+        $response = $this->request('PUT', '/admin/main-page-content', $document);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['data' => $document], $this->decode($response));
+        self::assertSame($document, $this->mainPageContent());
+
+        $public = $this->request('GET', '/main-page-content', null, false);
+        self::assertSame(200, $public->getStatusCode());
+        self::assertSame('/uploads/abc.jpg', $this->decode($public)['data']['hero']['image_url']);
+        self::assertSame(['data' => $document], $this->decode($public));
+
+        // Blank clears a selection; plain http URLs are accepted too.
+        $document['hero']['image_url'] = '';
+        $document['about']['portrait_url'] = 'http://cdn.example.com/portraits/joe.webp?v=2';
+        $response = $this->request('PUT', '/admin/main-page-content', $document);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame($document, $this->mainPageContent());
+        self::assertSame(['data' => $document], $this->decode($this->request('GET', '/main-page-content', null, false)));
+    }
+
+    public function testMainPageContentRejectsUnsafeOrMalformedImageUrlsAndKeepsStoredContent(): void
+    {
+        $before = $this->mainPageContent();
+        $message = 'Must be a site-relative path starting with "/" or an absolute http(s) URL.';
+
+        $invalid = $before;
+        $invalid['hero']['image_url'] = 'javascript:alert(1)';
+        $invalid['about']['portrait_url'] = '//evil.example/x.jpg';
+        $response = $this->request('PUT', '/admin/main-page-content', $invalid);
+        $json = $this->decode($response);
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame('Validation failed.', $json['error']);
+        self::assertSame([
+            'hero.image_url' => $message,
+            'about.portrait_url' => $message,
+        ], $json['fields']);
+        self::assertSame($before, $this->mainPageContent());
+
+        foreach ([
+            'data:image/png;base64,AA',
+            'uploads/x.jpg',
+            '/uploads/a b.jpg',
+            ' /uploads/x.jpg',
+            "/uploads/x.jpg\n",
+            '/\\evil.example/x.jpg',
+            'ftp://cdn.example.com/x.jpg',
+            'https://',
+        ] as $value) {
+            $invalid = $before;
+            $invalid['hero']['image_url'] = $value;
+            $invalid['about']['portrait_url'] = $value;
+            $response = $this->request('PUT', '/admin/main-page-content', $invalid);
+            self::assertSame(422, $response->getStatusCode(), $value);
+            self::assertSame([
+                'hero.image_url' => $message,
+                'about.portrait_url' => $message,
+            ], $this->decode($response)['fields'], $value);
+        }
+
+        $tooLong = $before;
+        $tooLong['hero']['image_url'] = '/' . str_repeat('a', 2048);
+        $tooLong['about']['portrait_url'] = 5;
+        $response = $this->request('PUT', '/admin/main-page-content', $tooLong);
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame([
+            'hero.image_url' => 'Must be at most 2048 characters.',
+            'about.portrait_url' => 'Must be a string.',
+        ], $this->decode($response)['fields']);
+
+        $missing = $before;
+        unset($missing['hero']['image_url'], $missing['about']['portrait_url']);
+        $missing['hero']['image'] = '/uploads/abc.jpg';
+        $response = $this->request('PUT', '/admin/main-page-content', $missing);
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame([
+            'hero.image_url' => 'This field is required.',
+            'hero.image' => 'Unknown field.',
+            'about.portrait_url' => 'This field is required.',
+        ], $this->decode($response)['fields']);
+        self::assertSame($before, $this->mainPageContent());
+    }
+
+    public function testMigrationBackfillsMainPageImageUrlsOnceAndPreservesStoredValues(): void
+    {
+        $legacy = $this->mainPageContent();
+        unset($legacy['hero']['image_url'], $legacy['about']['portrait_url']);
+        $legacy['hero']['heading'] = 'Legacy heading';
+        $legacy['about']['portrait_alt'] = 'Legacy portrait';
+
+        $this->pdo->exec('DELETE FROM main_page_content');
+        $insert = $this->pdo->prepare('INSERT INTO main_page_content (id, document) VALUES (1, :document)');
+        $insert->execute(['document' => json_encode($legacy, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)]);
+
+        Migrator::migrate($this->pdo);
+
+        $expected = $legacy;
+        $expected['hero']['image_url'] = '';
+        $expected['about']['portrait_url'] = '';
+        $migrated = $this->mainPageContent();
+        self::assertSame('', $migrated['hero']['image_url']);
+        self::assertSame('', $migrated['about']['portrait_url']);
+        self::assertSame($expected, $migrated);
+        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM main_page_content')->fetchColumn());
+
+        Migrator::migrate($this->pdo);
+        self::assertSame($expected, $this->mainPageContent());
+
+        // A chosen image survives later migrations untouched.
+        $expected['hero']['image_url'] = '/uploads/abc.jpg';
+        $expected['about']['portrait_url'] = 'https://cdn.example.com/p.jpg';
+        $response = $this->request('PUT', '/admin/main-page-content', $expected);
+        self::assertSame(200, $response->getStatusCode());
+        $saved = $this->mainPageContent();
+        self::assertSame('/uploads/abc.jpg', $saved['hero']['image_url']);
+        self::assertSame('https://cdn.example.com/p.jpg', $saved['about']['portrait_url']);
+
+        Migrator::migrate($this->pdo);
+        Migrator::migrate($this->pdo);
+        self::assertSame($saved, $this->mainPageContent());
     }
 
     /** @return array<string, mixed> */

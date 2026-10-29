@@ -82,7 +82,7 @@ function normalizeMediaItem(value: unknown): MediaItem | null {
   }
 }
 
-function readPublicApiUrl(): string {
+export function readPublicApiUrl(): string {
   if (typeof document === "undefined") return ""
 
   const data = document.getElementById("__NEXT_DATA__")?.textContent

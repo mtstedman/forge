@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { ApiError, requestJson } from "@/lib/api"
+import { ApiError, requestJson, resolveMediaUrl } from "@/lib/api"
 import type { MainPageContent } from "@/lib/main-page-content"
 import type { ConsultationBestTime, ConsultationRequestInput, PostSummary } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -512,6 +512,12 @@ export function HomeSections({
           content.hero.heading.slice(sentenceBreak + 2),
         ]
   const telephoneHref = `tel:${content.contact.phone.replace(/[^+\d]/g, "")}`
+  const heroImageUrl = content.hero.image_url
+    ? resolveMediaUrl(content.hero.image_url, apiUrl)
+    : ""
+  const portraitUrl = content.about.portrait_url
+    ? resolveMediaUrl(content.about.portrait_url, apiUrl)
+    : ""
 
   return (
     <>
@@ -574,13 +580,23 @@ export function HomeSections({
               </li>
             </ul>
           </div>
-          <figure
-            className="relative min-h-[28rem] overflow-hidden rounded-[2rem] border bg-primary shadow-xl lg:min-h-[38rem]"
-            role="img"
-            aria-label={content.hero.image_alt}
-          >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_20%,color-mix(in_oklab,var(--forge-gold)_45%,transparent),transparent_38%),linear-gradient(145deg,transparent_35%,color-mix(in_oklab,var(--forge-gold)_20%,transparent))]" />
-          </figure>
+          {heroImageUrl ? (
+            <figure className="relative min-h-[28rem] overflow-hidden rounded-[2rem] border bg-primary shadow-xl lg:min-h-[38rem]">
+              <img
+                src={heroImageUrl}
+                alt={content.hero.image_alt}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            </figure>
+          ) : (
+            <figure
+              className="relative min-h-[28rem] overflow-hidden rounded-[2rem] border bg-primary shadow-xl lg:min-h-[38rem]"
+              role="img"
+              aria-label={content.hero.image_alt}
+            >
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_20%,color-mix(in_oklab,var(--forge-gold)_45%,transparent),transparent_38%),linear-gradient(145deg,transparent_35%,color-mix(in_oklab,var(--forge-gold)_20%,transparent))]" />
+            </figure>
+          )}
         </div>
       </section>
 
@@ -659,11 +675,21 @@ export function HomeSections({
             "grid items-center gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-20"
           )}
         >
-          <figure
-            className="min-h-[28rem] rounded-[2rem] border bg-[linear-gradient(145deg,var(--secondary),var(--accent))] shadow-sm lg:min-h-[40rem]"
-            role="img"
-            aria-label={content.about.portrait_alt}
-          />
+          {portraitUrl ? (
+            <figure className="relative min-h-[28rem] overflow-hidden rounded-[2rem] border bg-[linear-gradient(145deg,var(--secondary),var(--accent))] shadow-sm lg:min-h-[40rem]">
+              <img
+                src={portraitUrl}
+                alt={content.about.portrait_alt}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            </figure>
+          ) : (
+            <figure
+              className="min-h-[28rem] rounded-[2rem] border bg-[linear-gradient(145deg,var(--secondary),var(--accent))] shadow-sm lg:min-h-[40rem]"
+              role="img"
+              aria-label={content.about.portrait_alt}
+            />
+          )}
           <div>
             <p className="mb-4 text-xs font-bold uppercase tracking-[0.22em] text-primary">
               {content.about.eyebrow}

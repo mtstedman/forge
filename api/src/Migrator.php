@@ -27,6 +27,7 @@ final class Migrator
         try {
             self::addPostCategories($pdo);
             self::seedTaxonomy($pdo);
+            self::addMainPageImageFields($pdo);
             if ($ownsTransaction) {
                 $pdo->commit();
             }
@@ -36,6 +37,23 @@ final class Migrator
             }
             throw $exception;
         }
+    }
+
+    /**
+     * Adds the hero.image_url and about.portrait_url keys (as "", no image selected) to a
+     * main-page document seeded before they existed. Only missing keys are set, so later
+     * runs leave every stored value (including a chosen image URL) untouched.
+     */
+    private static function addMainPageImageFields(PDO $pdo): void
+    {
+        $pdo->exec(
+            "UPDATE main_page_content SET document = json_set(document, '$.hero.image_url', '') "
+            . "WHERE json_type(document, '$.hero.image_url') IS NULL"
+        );
+        $pdo->exec(
+            "UPDATE main_page_content SET document = json_set(document, '$.about.portrait_url', '') "
+            . "WHERE json_type(document, '$.about.portrait_url') IS NULL"
+        );
     }
 
     /**
