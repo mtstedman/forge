@@ -42,6 +42,9 @@
   --forge-ink: oklch(0.245 0.025 65);
   --font-body: "Lora", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --font-display: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  /* Sticky public header: min-h-20 row + 1px bottom border. Refined at runtime
+     from the header's measured border-box height in PublicLayout. */
+  --site-header-height: calc(5rem + 1px);
 }
 
 .dark {

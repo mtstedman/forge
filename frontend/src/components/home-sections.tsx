@@ -175,7 +175,7 @@ const faqs = [
   },
 ] as const
 
-const sectionClass = "scroll-mt-24 border-t border-border/80 py-20 sm:py-24 lg:py-28"
+const sectionClass = "scroll-mt-(--site-header-height) border-t border-border/80 py-20 sm:py-24 lg:py-28"
 const containerClass = "mx-auto max-w-7xl px-5 sm:px-8 lg:px-10"
 
 function SectionHeading({

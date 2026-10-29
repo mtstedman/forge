@@ -56,6 +56,33 @@ export function PublicLayout({
 }: PublicLayoutProps): React.JSX.Element {
   const year = new Date().getFullYear()
   const resourcesCurrent = active === "resources" ? "page" : undefined
+  const headerRef = React.useRef<HTMLElement>(null)
+
+  // Publish the sticky header's full rendered height (border-box, including its
+  // bottom border) so anchor destinations can offset by exactly that amount.
+  React.useEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+
+    const root = document.documentElement
+    const update = () => {
+      root.style.setProperty(
+        "--site-header-height",
+        `${header.getBoundingClientRect().height}px`
+      )
+    }
+
+    update()
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update)
+      return () => window.removeEventListener("resize", update)
+    }
+
+    const observer = new ResizeObserver(update)
+    observer.observe(header, { box: "border-box" })
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -63,7 +90,7 @@ export function PublicLayout({
         Skip to content
       </a>
 
-      <header className="sticky top-0 z-40 border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
+      <header ref={headerRef} className="sticky top-0 z-40 border-b border-border/80 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
         <div className="mx-auto flex min-h-20 max-w-7xl items-center justify-between gap-6 px-5 sm:px-8 lg:px-10">
           <Brand active={active} />
 
