@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LoaderCircle,
   LogOut,
+  Menu,
   MessageSquare,
   ShieldCheck,
 } from "lucide-react"
@@ -14,6 +15,15 @@ import { useState } from "react"
 
 import { useAdminAuth } from "@/components/admin/auth-provider"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
 type AdminTab = "main-page" | "posts" | "media" | "comments" | "consultations"
@@ -62,6 +72,8 @@ export function AdminLayout({
   }
 
   const accountName = user.name || user.email || user.sub || "Administrator"
+  const activeTab = tabs.find((tab) => tab.id === active) ?? tabs[0]
+  const ActiveIcon = activeTab.icon
 
   const signOut = async () => {
     setSigningOut(true)
@@ -108,8 +120,52 @@ export function AdminLayout({
       </header>
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mb-6 flex items-center gap-3 sm:hidden">
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Open admin sections">
+                <Menu aria-hidden="true" />
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="left-auto right-0 top-0 h-dvh w-[min(22rem,calc(100%-2rem))] max-w-none translate-x-0 translate-y-0 rounded-none border-y-0 border-r-0 p-0 sm:w-96">
+              <DialogHeader className="border-b px-6 py-7 pr-14 text-left">
+                <DialogTitle className="text-2xl">Admin sections</DialogTitle>
+                <DialogDescription>Choose a section to manage.</DialogDescription>
+              </DialogHeader>
+              <nav aria-label="Mobile admin sections" className="flex flex-col gap-1 px-4 py-5">
+                {tabs.map((tab) => {
+                  const Icon = tab.icon
+                  const selected = active === tab.id
+                  return (
+                    <DialogClose key={tab.id} asChild>
+                      <button
+                        type="button"
+                        className={cn(
+                          "inline-flex min-h-11 items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                          selected
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        )}
+                        aria-current={selected ? "page" : undefined}
+                        onClick={() => onNavigate(tab.id)}
+                      >
+                        <Icon className="size-4" aria-hidden="true" />
+                        {tab.label}
+                      </button>
+                    </DialogClose>
+                  )
+                })}
+              </nav>
+            </DialogContent>
+          </Dialog>
+          <p className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            <ActiveIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <span className="truncate">{activeTab.label}</span>
+          </p>
+        </div>
+
         <nav
-          className="mb-6 grid grid-cols-2 gap-1 rounded-xl border bg-background p-1 shadow-xs sm:inline-flex"
+          className="mb-6 hidden gap-1 rounded-xl border bg-background p-1 shadow-xs sm:inline-flex"
           aria-label="Admin sections"
         >
           {tabs.map((tab) => {
